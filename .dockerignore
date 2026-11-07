@@ -1,0 +1,14 @@
+# 构建上下文裁剪: 不需要的目录不打进镜像
+bench-results/
+data/
+dist/
+build/
+*.spec
+__pycache__/
+.claude/
+.git/
+*.log
+*.exe
+users.json
+headless-bench.mjs
+pelican-*.svg

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 - IceBreaker</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+    .login-wrap {
+      min-height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(22, 163, 74, 0.16), transparent),
+        var(--black, #0A0A0A);
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 400px;
+      background: var(--gray-800, #161616);
+      border: 1px solid var(--gray-600, #2A2A2A);
+      border-radius: 14px;
+      padding: 34px 32px 28px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    }
+    .login-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .login-brand svg { width: 34px; height: 34px; flex: none; }
+    .login-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--white, #fff);
+      letter-spacing: 0.5px;
+    }
+    .login-sub {
+      font-size: 12px;
+      color: var(--gray-400, #8A8A8A);
+      margin: 0 0 24px;
+    }
+    .login-form .form-item { margin-bottom: 16px; }
+    .login-form .form-input {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .login-error {
+      display: none;
+      background: rgba(22, 163, 74, 0.12);
+      border: 1px solid rgba(22, 163, 74, 0.45);
+      color: #EA580C;
+      border-radius: 8px;
+      font-size: 12.5px;
+      line-height: 1.6;
+      padding: 10px 12px;
+      margin-bottom: 16px;
+      word-break: break-all;
+    }
+    .login-error.visible { display: block; }
+    .login-submit {
+      width: 100%;
+      margin-top: 6px;
+      padding: 12px 0;
+      font-size: 14px;
+    }
+    .login-submit:disabled { opacity: 0.55; cursor: not-allowed; }
+    .login-foot {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 11.5px;
+      color: var(--gray-600, #5A5A5A);
+      line-height: 1.8;
+    }
+    .login-foot code {
+      font-family: var(--mono, monospace);
+      color: var(--gray-400, #8A8A8A);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-brand">
+        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="32" height="32" rx="7" fill="#16A34A"/>
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" transform="translate(4.5,4) scale(1.15)" fill="#FFFFFF"/>
+        </svg>
+        <div class="login-title">IceBreaker</div>
+      </div>
+      <p class="login-sub">LLM API 与 GPU 全方位性能压力与基准评测系统 · 登录后进入控制台</p>
+
+      <form class="login-form" id="loginForm" autocomplete="on">
+        <div class="login-error" id="loginError"></div>
+        <div class="form-item">
+          <label class="form-label" for="loginUser">账号</label>
+          <input class="form-input" type="text" id="loginUser" name="username"
+                 placeholder="请输入账号" autocomplete="username" autofocus required>
+        </div>
+        <div class="form-item">
+          <label class="form-label" for="loginPass">密码</label>
+          <input class="form-input" type="password" id="loginPass" name="password"
+                 placeholder="请输入密码" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-primary login-submit" id="loginSubmitBtn">登 录</button>
+      </form>
+
+      <div class="login-foot">
+        默认账号 <code>admin / admin123</code> · 请登录后尽快重置<br>
+        忘记密码请联系管理员: <code>python server.py --add-user &lt;账号&gt;</code>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById('loginForm');
+      var errBox = document.getElementById('loginError');
+      var submitBtn = document.getElementById('loginSubmitBtn');
+      var redirectTarget = new URLSearchParams(location.search).get('next') || '/';
+
+      function showError(msg) {
+        errBox.textContent = msg;
+        errBox.classList.add('visible');
+      }
+
+      // 已登录则直接进入控制台
+      fetch('/api/me').then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.ok) location.replace(redirectTarget);
+      }).catch(function () {});
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        errBox.classList.remove('visible');
+        submitBtn.disabled = true;
+        submitBtn.textContent = '正在验证…';
+
+        fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('loginUser').value.trim(),
+            password: document.getElementById('loginPass').value
+          })
+        }).then(function (resp) {
+          return resp.json().then(function (d) { return { ok: resp.ok, data: d }; });
+        }).then(function (r) {
+          if (r.ok && r.data.ok) {
+            submitBtn.textContent = '登录成功，正在进入…';
+            location.replace(redirectTarget);
+          } else {
+            showError((r.data && r.data.error) || '登录失败，请检查账号与密码');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '登 录';
+          }
+        }).catch(function (err) {
+          showError('无法连接服务器: ' + err.message + ' (请确认服务已启动)');
+          submitBtn.disabled = false;
+          submitBtn.textContent = '登 录';
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

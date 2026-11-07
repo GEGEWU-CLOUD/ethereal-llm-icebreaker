@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IceBreaker · LLM API 与 GPU 全方位性能压力与基准评测系统</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="vendor/chart.umd.min.js"></script>
+  <script src="vendor/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- Navbar -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-title">
+          <h2>IceBreaker</h2>
+          <span class="badge-tag">Pro v2.5</span>
+        </div>
+        <p class="brand-sub">LLM API 与 GPU 全方位性能压力与基准评测系统</p>
+        <p class="brand-desc">5–100 并发阶梯 · 64k–1M 极限长上下文 · 最大输出探测 · Sweet Spot 与压力拐点智能诊断</p>
+      </div>
+    </div>
+
+    <div class="nav-controls">
+      <div class="status-pill" id="systemStatusBadge">
+        <span class="status-dot"></span>
+        <span class="status-label">系统就绪</span>
+      </div>
+      <button type="button" class="theme-toggle" id="btnThemeToggle" title="白天 / 夜间模式切换" aria-label="切换主题">
+        <svg class="ico-sun" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
+        <svg class="ico-moon" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      </button>
+      <span class="user-chip hidden" id="userChip">
+        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        <span id="userChipName">-</span>
+      </span>
+      <button class="btn btn-outline btn-sm hidden" id="btnChangePass" title="修改当前账号密码">改密</button>
+      <button class="btn btn-outline btn-sm hidden" id="btnLogout" title="退出登录">退出</button>
+      <div class="nav-export-group" data-mode="llm">
+        <button class="btn btn-secondary btn-sm" id="btnExportJson">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          导出 JSON
+        </button>
+        <button class="btn btn-secondary btn-sm" id="btnExportHtml" title="导出自包含 HTML 报告 (图表内嵌, 可离线打开)">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+          导出 HTML
+        </button>
+        <button class="btn btn-secondary btn-sm" id="btnExportPdf" title="导出 PDF 报告 (A4, 含图表与诊断结论)">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+          导出 PDF
+        </button>
+        <button class="btn btn-primary btn-sm" id="btnExportReport">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+          复制 Markdown 报告
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 修改密码弹窗 -->
+  <dialog id="dlgChangePass" class="modal-dlg">
+    <div class="modal-title">修改密码</div>
+    <div class="modal-sub">当前账号: <b id="cpUser">-</b></div>
+    <form id="formChangePass" autocomplete="off">
+      <div class="form-item"><label for="cpOld">原密码</label>
+        <input type="password" id="cpOld" class="form-input" autocomplete="current-password" required></div>
+      <div class="form-item"><label for="cpNew">新密码 (≥6 位)</label>
+        <input type="password" id="cpNew" class="form-input" autocomplete="new-password" minlength="6" required></div>
+      <div class="form-item"><label for="cpNew2">确认新密码</label>
+        <input type="password" id="cpNew2" class="form-input" autocomplete="new-password" minlength="6" required></div>
+      <div class="modal-err hidden" id="cpError"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+        <button type="button" class="btn btn-outline btn-sm" id="cpCancel">取消</button>
+        <button type="submit" class="btn btn-primary btn-sm" id="cpSubmit">确认修改</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ══ 入口选择页: 登录后首先展示两张大卡片 ══ -->
+  <div id="launcherView" class="launcher">
+    <div class="launcher-head">
+      <h1>选择压测对象</h1>
+      <p>点击卡片进入对应工作台</p>
+    </div>
+    <div class="launcher-grid">
+      <button type="button" class="launch-card lc-llm" data-launch="llm">
+        <span class="lc-ico">
+          <svg viewBox="0 0 24 24" width="26" height="26" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+        </span>
+        <span class="lc-title">LLM API 压测</span>
+        <span class="lc-sub">vLLM / OpenAI 兼容端点性能基准</span>
+        <span class="lc-feats">
+          <span>· 并发阶梯压测 (1–100) · Sweet Spot 推荐</span>
+          <span>· 长上下文极限 + 针尖探针校验</span>
+          <span>· HTML / MD / PDF 报告一键导出</span>
+        </span>
+        <span class="lc-enter">进入工作台 →</span>
+      </button>
+      <button type="button" class="launch-card lc-gpu" data-launch="gpu">
+        <span class="lc-ico">
+          <svg viewBox="0 0 24 24" width="26" height="26" stroke="currentColor" stroke-width="2" fill="none"><rect x="6" y="6" width="12" height="12" rx="2"></rect><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"></path><rect x="10" y="10" width="4" height="4"></rect></svg>
+        </span>
+        <span class="lc-title">GPU 服务器压测</span>
+        <span class="lc-sub">gpu-burn 满载 · 服务器上架验收</span>
+        <span class="lc-feats">
+          <span>· SSH 全自动执行 或 手动上传产物</span>
+          <span>· 温度 / 功耗 / SM 时钟实时遥测</span>
+          <span>· 逐卡算力与热降频甄别报告</span>
+        </span>
+        <span class="lc-enter">进入工作台 →</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ══ 工作台视图 (点击卡片后进入) ══ -->
+  <div id="workspaceView" hidden>
+    <div class="ws-topbar">
+      <button type="button" class="btn btn-outline btn-xs" id="btnBackLauncher">‹ 返回选择压测类型</button>
+      <span class="ws-mode-label" id="wsModeLabel">LLM API 压测</span>
+    </div>
+
+
+  <!-- CORS 跨域智能提醒与代理条 (仅在直连受阻或 file 协议时激活) -->
+  <div id="corsAlertBanner" class="cors-banner hidden">
+    <div class="cors-banner-inner">
+      <span class="cors-badge">CORS 警示</span>
+      <span class="cors-msg">检测到当前目标 API 未放行浏览器 OPTIONS 预检请求（或正在通过 file:// 打开）。建议点击启用内置代理以彻底免除跨域拦截。</span>
+      <div class="cors-actions">
+        <button type="button" class="btn btn-xs btn-primary" id="btnQuickEnableProxy">一键开启 CORS 代理</button>
+        <button type="button" class="btn-icon" id="btnCloseCorsBanner" title="关闭提示">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main workspace -->
+  <main class="main-body">
+
+    <!-- ── LEFT SIDEBAR ── -->
+    <aside class="sidebar-column">
+
+      <!-- Step 1: API Config (LLM 工作区) -->
+      <div class="ui-card" data-mode="llm">
+        <div class="card-head">
+          <h3><span class="step-badge">1</span>接口凭证与参数</h3>
+        </div>
+        <div class="card-content">
+
+          <div class="form-item">
+            <label for="presetSelect">服务商快速预设</label>
+            <select id="presetSelect" class="form-select">
+              <option value="">— 选择服务商（一键填入）—</option>
+              <option data-url="https://api.deepseek.com/v1" data-model="deepseek-chat">DeepSeek 官方 (deepseek-chat)</option>
+              <option data-url="https://api.siliconflow.cn/v1" data-model="deepseek-ai/DeepSeek-V3">硅基流动 SiliconFlow (DeepSeek-V3)</option>
+              <option data-url="https://api.openai.com/v1" data-model="gpt-4o-mini">OpenAI 官方 (gpt-4o-mini)</option>
+              <option data-url="https://dashscope.aliyuncs.com/compatible-mode/v1" data-model="qwen-plus">阿里通义千问 (qwen-plus)</option>
+              <option data-url="https://open.bigmodel.cn/api/paas/v4" data-model="glm-4-plus">智谱 GLM-4 (glm-4-plus)</option>
+              <option data-url="https://api.moonshot.cn/v1" data-model="moonshot-v1-128k">月之暗面 Kimi (moonshot-v1-128k)</option>
+              <option data-url="http://localhost:11434/v1" data-model="llama3">本地 Ollama / vLLM (llama3)</option>
+            </select>
+          </div>
+
+          <div class="form-item">
+            <label for="apiUrl">API BASE URL <span class="required-mark">*</span></label>
+            <input type="text" id="apiUrl" class="form-input" placeholder="https://api.openai.com/v1" value="https://api.openai.com/v1">
+          </div>
+
+          <div class="form-item">
+            <label for="apiKey">API KEY <span class="required-mark">*</span></label>
+            <div class="input-action-wrap">
+              <input type="password" id="apiKey" class="form-input" placeholder="sk-..." autocomplete="off">
+              <button type="button" class="btn-icon" id="btnToggleKey" title="显示/隐藏">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-item">
+            <label for="modelName">模型标识 (MODEL) <span class="required-mark">*</span></label>
+            <div class="input-action-wrap">
+              <input type="text" id="modelName" class="form-input" placeholder="gpt-4o-mini / deepseek-chat" value="gpt-4o-mini">
+              <button type="button" class="btn btn-outline btn-xs" id="btnFetchModels">获取列表</button>
+            </div>
+            <select id="modelSelect" class="form-select hidden" style="margin-top:6px;"></select>
+          </div>
+
+          <div class="form-row-2">
+            <div class="form-item">
+              <label for="streamMode">请求模式</label>
+              <select id="streamMode" class="form-select">
+                <option value="true" selected>流式 Stream（精准 TTFT）</option>
+                <option value="false">阻塞式</option>
+              </select>
+            </div>
+            <div class="form-item">
+              <label for="reqTimeout">超时时间</label>
+              <select id="reqTimeout" class="form-select">
+                <option value="60">60 秒</option>
+                <option value="120" selected>120 秒</option>
+                <option value="240">240 秒（长文本）</option>
+                <option value="360">360 秒</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- CORS 代理中继设置 -->
+          <div class="form-item cors-option-item">
+            <div class="cors-toggle-row">
+              <label class="checkbox-label" for="enableCorsProxy">
+                <input type="checkbox" id="enableCorsProxy" checked>
+                <span>开启 CORS 跨域代理中继</span>
+              </label>
+              <span class="cors-tag active" id="corsStatusTag">已开启</span>
+            </div>
+            <div id="proxyUrlWrap" style="margin-top:8px;">
+              <div style="display:flex; gap:6px; margin-bottom:6px;">
+                <select id="proxyNodeSelect" class="form-select" style="font-size:11px; padding:4px 8px;">
+                  <option value="/proxy?url=" selected>同源中继 (与本页面同端口, 推荐)</option>
+                  <option value="http://127.0.0.1:8765/proxy?url=">本地高速中继 (127.0.0.1:8765)</option>
+                  <option value="https://corsproxy.io/?url=">免后端公共中继 (直开直用)</option>
+                  <option value="custom">自定义代理端点...</option>
+                </select>
+              </div>
+              <input type="text" id="proxyBaseUrl" class="form-input" style="font-size:11px;" value="/proxy?url=" placeholder="/proxy?url= 或 http://127.0.0.1:8765/proxy?url=">
+              <small style="color:#666; font-size:10px; display:block; margin-top:3px;">* 自动穿透 OPTIONS 预检，支持流式 SSE 逐字直传</small>
+            </div>
+          </div>
+
+          <div class="form-item" style="margin-bottom:0;">
+            <button class="btn btn-outline btn-sm w-100" id="btnTestConnection">
+              <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+              验证连通性 (Ping 1 次)
+            </button>
+            <div id="connResult" class="conn-box hidden"></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Step 2: Test Plan (LLM 工作区) -->
+      <div class="ui-card" data-mode="llm">
+        <div class="card-head">
+          <h3><span class="step-badge">2</span>压测方案与执行</h3>
+        </div>
+        <div class="card-content">
+
+          <div class="segmented-control" style="flex-wrap:wrap;">
+            <button class="seg-btn active" data-tab="tab-full">一键全方位</button>
+            <button class="seg-btn" data-tab="tab-concurrency">并发阶梯</button>
+            <button class="seg-btn" data-tab="tab-context">长文本极限</button>
+            <button class="seg-btn" data-tab="tab-output">最大输出</button>
+          </div>
+
+          <!-- Tab: Full Suite -->
+          <div class="tab-view active" id="tab-full">
+            <div class="suite-timeline-clean">
+              <div class="timeline-step">
+                <div class="dot-num">1</div>
+                <div class="step-info">
+                  <strong>输出容量探测</strong>
+                  <span>测定服务端单次最大 Token 吐出极限与持续解码速率</span>
+                </div>
+              </div>
+              <div class="timeline-step">
+                <div class="dot-num">2</div>
+                <div class="step-info">
+                  <strong>极限长上下文注入</strong>
+                  <span>64k → 128k → 256k → 512k → 1M 逐级探测及针尖密匙命中</span>
+                </div>
+              </div>
+              <div class="timeline-step">
+                <div class="dot-num">3</div>
+                <div class="step-info">
+                  <strong>5–100 并发阶梯压测</strong>
+                  <span>分级探测峰值 RPM/TPM、延迟拐点与最佳并发推荐</span>
+                </div>
+              </div>
+            </div>
+            <div class="form-item" style="margin-top:12px;">
+              <label>阶梯并发测试采样模式</label>
+              <div class="clean-radio-group">
+                <label><input type="radio" name="fullReqCount" value="10"> 极速探针 (基础基线)</label>
+                <label><input type="radio" name="fullReqCount" value="20" checked> 标准稳态 (自动闭环维持)</label>
+                <label><input type="radio" name="fullReqCount" value="50"> 深度抗压 (严苛生产压测)</label>
+              </div>
+              <small style="color:var(--gray-400); font-size:11px; display:block; margin-top:4px;">* 自动引入预热及并发闭环队列，杜绝冷启动与单批次脉冲假象</small>
+            </div>
+          </div>
+
+          <!-- Tab: Concurrency -->
+          <div class="tab-view" id="tab-concurrency">
+            <div class="form-item">
+              <label>并发测试梯度</label>
+              <div class="clean-checkbox-grid">
+                <label><input type="checkbox" name="concurrencyLevel" value="5" checked> 并发 5</label>
+                <label><input type="checkbox" name="concurrencyLevel" value="10" checked> 并发 10</label>
+                <label><input type="checkbox" name="concurrencyLevel" value="20" checked> 并发 20</label>
+                <label><input type="checkbox" name="concurrencyLevel" value="50" checked> 并发 50</label>
+                <label><input type="checkbox" name="concurrencyLevel" value="100" checked> 并发 100</label>
+              </div>
+            </div>
+            <div class="form-row-2">
+              <div class="form-item">
+                <label for="requestsPerLevel">每级总请求数</label>
+                <input type="number" id="requestsPerLevel" class="form-input" value="20" min="5" max="500">
+              </div>
+              <div class="form-item">
+                <label for="promptSizeConcurrency">Prompt 规模</label>
+                <select id="promptSizeConcurrency" class="form-select">
+                  <option value="short" selected>轻量 (~100 tok)</option>
+                  <option value="medium">常见业务 (~500 tok)</option>
+                  <option value="long">长输入 (~2.5k tok)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: Context -->
+          <div class="tab-view" id="tab-context">
+            <div class="form-item">
+              <label>长上下文梯度</label>
+              <div class="clean-checkbox-grid">
+                <label><input type="checkbox" name="contextTier" value="64" checked> 64k Tokens</label>
+                <label><input type="checkbox" name="contextTier" value="128" checked> 128k Tokens</label>
+                <label><input type="checkbox" name="contextTier" value="256" checked> 256k Tokens</label>
+                <label><input type="checkbox" name="contextTier" value="512" checked> 512k Tokens</label>
+                <label><input type="checkbox" name="contextTier" value="1024" checked> 1M Tokens</label>
+              </div>
+              <span class="field-hint">自动构造结构化探针文本，验证模型是否真正完整处理。</span>
+            </div>
+          </div>
+
+          <!-- Tab: Output -->
+          <div class="tab-view" id="tab-output">
+            <div class="form-item">
+              <label for="outputTargetTokens">申请 max_tokens</label>
+              <select id="outputTargetTokens" class="form-select">
+                <option value="4096">4,096 tokens（通用基准）</option>
+                <option value="8192" selected>8,192 tokens（常见标准）</option>
+                <option value="16384">16,384 tokens（长输出模型）</option>
+                <option value="32768">32,768 tokens（极限测试）</option>
+              </select>
+              <span class="field-hint">实测服务端单次能输出的绝对 Token 上限与截断原因。</span>
+            </div>
+          </div>
+
+          <!-- Launch -->
+          <div class="launch-btn-wrap">
+            <button class="btn btn-primary btn-lg w-100" id="btnStartBenchmark">
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              开始执行压测评测
+            </button>
+            <button class="btn btn-danger btn-lg w-100 hidden" id="btnStopBenchmark">
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none"><rect x="6" y="6" width="12" height="12"></rect></svg>
+              紧急终止测试 (Stop)
+            </button>
+          </div>
+
+          <!-- Progress -->
+          <div class="progress-card hidden" id="progressSection">
+            <div class="progress-head">
+              <span class="progress-phase-title" id="progressPhaseText">准备就绪...</span>
+              <span class="progress-percentage-num" id="progressPercentText">0%</span>
+            </div>
+            <div class="progress-bar-rail">
+              <div class="progress-bar-fill" id="progressBarFill" style="width:0%;"></div>
+            </div>
+            <div class="progress-sub-caption" id="progressSubText">已完成 0 / 0 请求</div>
+          </div>
+
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── RIGHT DASHBOARD ── -->
+    <section class="dashboard-column">
+
+      <!-- GPU 配置卡 (GPU 工作区) -->
+      <div class="ui-card" data-mode="gpu" hidden id="gpuConfigCard">
+        <div class="card-head">
+          <h3><span class="step-badge wide">GPU</span>压测配置与执行</h3>
+        </div>
+        <div class="card-content">
+          <div class="form-item">
+            <label>模式 A · SSH 全自动执行 <small style="color:var(--gray-400);">(支持多台同时压测,自动上传脚本 → 后台压测 → 自动取回产物)</small></label>
+            <div id="gpuTargetList"></div>
+            <button type="button" class="btn btn-outline btn-xs" id="btnGpuAddTarget" style="margin-top:8px;">+ 添加服务器</button>
+            <div class="form-item" style="margin-top:12px;">
+              <label for="gpuBurnSec">压测时长 (全部服务器共用)</label>
+              <select id="gpuBurnSec" class="form-select">
+                <option value="60">1 分钟 · 冒烟验证</option>
+                <option value="300">5 分钟 · 快速抽检</option>
+                <option value="600">10 分钟 · 样例同款</option>
+                <option value="1800" selected>30 分钟 · 标准上架 (推荐)</option>
+                <option value="3600">60 分钟 · 深度复验</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+              <button class="btn btn-primary" id="btnGpuStart">启动全部压测</button>
+              <button class="btn btn-danger hidden" id="btnGpuStopAll">停止全部</button>
+            </div>
+          </div>
+
+          <div class="form-item" style="border-top:1px solid var(--gray-100);padding-top:14px;">
+            <label>模式 B · 手动上传产物解析 <small style="color:var(--gray-400);">(自己在服务器跑完脚本后,上传三件产物)</small></label>
+            <div style="font-size:11.5px;color:var(--gray-400);line-height:1.8;margin-bottom:8px;">
+              ① 下载两个文件放入服务器同一目录(如 /tmp):<a href="gpu_check.sh" download style="color:var(--accent);">gpu_check.sh</a> + <a href="vendor/gpu-burn.tar.gz" download style="color:var(--accent);">gpu-burn.tar.gz</a>(离线源码包,免联网下载)<br>
+              ② 服务器执行:<code style="background:var(--gray-100);padding:1px 6px;border-radius:4px;">cd /tmp &amp;&amp; sudo ./gpu_check.sh 1800</code><br>
+              ③ 跑完后产物位于 <code style="background:var(--gray-100);padding:1px 6px;border-radius:4px;">hwcheck_*/</code> 目录,上传下方三件即可
+            </div>
+            <div class="form-item"><label for="gpuFileReport">REPORT_*.txt</label><input type="file" id="gpuFileReport" class="form-input" accept=".txt,.log"></div>
+            <div class="form-item"><label for="gpuFileTele">gpu_telemetry.csv</label><input type="file" id="gpuFileTele" class="form-input" accept=".csv"></div>
+            <div class="form-item"><label for="gpuFileBurn">gpu_burn.log</label><input type="file" id="gpuFileBurn" class="form-input" accept=".log,.txt"></div>
+            <button class="btn btn-outline" id="btnGpuParse" style="margin-top:6px;">解析并生成报告</button>
+          </div>
+
+          <div id="gpuLiveSection" class="hidden" style="margin-top:14px;">
+            <div class="form-item" style="border-top:1px solid var(--gray-100);padding-top:12px;">
+              <label>压测任务实时状态 (<span id="gpuRunningCount">0</span> 台在途)</label>
+              <div id="gpuJobBlocks"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── RIGHT DASHBOARD ── -->
+    <section class="dashboard-column">
+
+      <!-- Telemetry strip (dark) (LLM 工作区) -->
+      <div class="telemetry-strip" id="telemetryHud" data-mode="llm">
+        <div class="tel-item main-status">
+          <span class="tel-tag">当前状态</span>
+          <div class="tel-val-live">
+            <span class="pulse-ring" id="hudDot" style="display:none;"></span>
+            <span id="hudStateText">等待开始压测任务</span>
+          </div>
+        </div>
+        <div class="tel-item">
+          <span class="tel-tag">运行计时</span>
+          <span class="tel-num" id="hudTimer">00:00.0</span>
+        </div>
+        <div class="tel-item">
+          <span class="tel-tag">流式 Token 计数</span>
+          <span class="tel-num" id="hudTokenCount">0 <small>tok</small></span>
+        </div>
+        <div class="tel-item">
+          <span class="tel-tag">实时生成速率</span>
+          <span class="tel-num" id="hudLiveSpeed">0.0 <small>tok/s</small></span>
+        </div>
+        <div class="tel-item">
+          <span class="tel-tag">活跃 Workers</span>
+          <span class="tel-num" id="hudActiveWorkers">0 <small>活跃</small></span>
+        </div>
+      </div>
+
+      <!-- Scrollable dashboard body -->
+      <div class="dashboard-inner">
+
+        <!-- KPI Deck (LLM 工作区) -->
+        <div class="kpi-deck" data-mode="llm">
+
+          <div class="kpi-box k-blue">
+            <div class="kpi-heading"><span>实测吞吐 RPM / RPS</span></div>
+            <div class="kpi-category"></div>
+            <div class="kpi-figure">
+              <span class="big-number" id="valRpm">0.0</span>
+              <span class="unit-text">RPM</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>峰值 RPS: <strong id="valRps">0.0</strong> req/s</span>
+              <span id="valCompletedReqs">已测: 0</span>
+            </div>
+          </div>
+
+          <div class="kpi-box k-amber">
+            <div class="kpi-heading"><span>实测吞吐 TPM / TPS</span></div>
+            <div class="kpi-category"></div>
+            <div class="kpi-figure">
+              <span class="big-number" id="valTpm">0</span>
+              <span class="unit-text">TPM</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>生成 TPS: <strong id="valTps">0.0</strong> tok/s</span>
+              <span>Token 比: <strong id="valTokenRatio">—</strong></span>
+            </div>
+          </div>
+
+          <div class="kpi-box k-purple">
+            <div class="kpi-heading"><span>实际最大承载上下文</span></div>
+            <div class="kpi-category"></div>
+            <div class="kpi-figure">
+              <span class="big-number" id="valMaxContext">—</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>安全边界: <strong id="valSafeContext">—</strong></span>
+              <span>1M 探测: <strong id="val1MStatus">—</strong></span>
+            </div>
+          </div>
+
+          <div class="kpi-box k-cyan">
+            <div class="kpi-heading"><span>实际单次最大输出</span></div>
+            <div class="kpi-category"></div>
+            <div class="kpi-figure">
+              <span class="big-number" id="valMaxOutput">—</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>截断原因: <strong id="valFinishReason">—</strong></span>
+              <span>生成速度: <strong id="valOutSpeed">—</strong> tok/s</span>
+            </div>
+          </div>
+
+          <div class="kpi-box k-green">
+            <div class="kpi-heading"><span>最佳并发推荐 Sweet Spot</span></div>
+            <div class="kpi-category"></div>
+            <div class="kpi-figure">
+              <span class="big-number" id="valBestConcurrency">—</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>效益得分: <strong id="valBestScore">—</strong></span>
+              <span>P90 延迟: <strong id="valBestLatency">—</strong> ms</span>
+            </div>
+          </div>
+
+          <div class="kpi-box k-red">
+            <div class="kpi-heading"><span>压力瓶颈与限流点</span></div>
+            <div class="kpi-category"></div>
+            <div class="kpi-figure">
+              <span class="big-number" id="valStressPoint">—</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>首次 429: <strong id="valFirst429">无</strong></span>
+              <span>延迟突增: <strong id="valLatencySpike">无</strong></span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- AI Diagnostic Report (LLM 工作区) -->
+        <div data-mode="llm">
+          <div class="report-section-head">
+            <h3>全方位大模型性能与极限压力诊断评估报告</h3>
+            <span class="badge-status-clean" id="reportStatusTag">实时分析与建议生成器</span>
+          </div>
+          <div class="report-grid">
+
+            <div class="report-cell">
+              <div class="cell-header">
+                <div class="cell-label-block"></div>
+                <h4>综合评测结论与架构选型建议</h4>
+              </div>
+              <div class="cell-body" id="reportConclusion">
+                点击左侧"开始执行压测评测"后，系统将自动汇总并发性能、长上下文支撑度与最大输出上限，并输出全方位权威评估。
+              </div>
+            </div>
+
+            <div class="report-cell">
+              <div class="cell-header">
+                <div class="cell-label-block"></div>
+                <h4>最佳并发 Sweet Spot 与性能权衡</h4>
+              </div>
+              <div class="cell-body" id="reportSweetSpot">
+                等待测试数据注入以计算最佳 RPS / 延迟平衡拐点。
+              </div>
+            </div>
+
+            <div class="report-cell">
+              <div class="cell-header">
+                <div class="cell-label-block"></div>
+                <h4>压力点诊断与风险预警 Bottlenecks</h4>
+              </div>
+              <div class="cell-body" id="reportStressPoint">
+                尚未检测到高并发拒绝 (429) 或延迟恶化。
+              </div>
+            </div>
+
+            <div class="report-cell">
+              <div class="cell-header">
+                <div class="cell-label-block"></div>
+                <h4>长文本深度与单次输出容量画像</h4>
+              </div>
+              <div class="cell-body" id="reportContextOutput">
+                等待执行长上下文 (64k–1M) 与最大输出探测。
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Charts Row 1 (LLM 工作区) -->
+        <div data-mode="llm">
+          <div class="section-head">
+            <h3>并发阶梯趋势图</h3>
+          </div>
+          <div class="charts-row">
+            <div class="chart-container">
+              <div class="chart-head">
+                <h4>并发阶梯 vs 响应延迟 (P50 / P90 / TTFT)</h4>
+                <span class="chart-legend-unit">秒 (s)</span>
+              </div>
+              <div class="chart-canvas-box"><canvas id="chartLatency"></canvas></div>
+            </div>
+            <div class="chart-container">
+              <div class="chart-head">
+                <h4>并发阶梯 vs 吞吐量 (RPS & TPM 双轴)</h4>
+                <span class="chart-legend-unit">双轴吞吐</span>
+              </div>
+              <div class="chart-canvas-box"><canvas id="chartThroughput"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Row 2 (LLM 工作区) -->
+        <div data-mode="llm">
+          <div class="section-head">
+            <h3>长上下文与请求状态分布</h3>
+          </div>
+          <div class="charts-row">
+            <div class="chart-container">
+              <div class="chart-head">
+                <h4>长上下文深度 (64k–1M) vs 首字延迟 TTFT</h4>
+                <span class="chart-legend-unit">KV-Cache Prefill 耗时</span>
+              </div>
+              <div class="chart-canvas-box"><canvas id="chartContext"></canvas></div>
+            </div>
+            <div class="chart-container">
+              <div class="chart-head">
+                <h4>请求状态码分布 (200 / 429 / 5xx / 超时)</h4>
+                <span class="chart-legend-unit">稳定性监测</span>
+              </div>
+              <div class="chart-canvas-box"><canvas id="chartStatus"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 1: Concurrency Table (直接展示，无 Tab) (LLM 工作区) -->
+        <div data-mode="llm">
+          <div class="section-head">
+            <h3>各并发档位详实统计表 (5 / 10 / 20 / 50 / 100)</h3>
+          </div>
+          <div class="table-responsive" style="border:1px solid var(--gray-200);">
+            <table class="clean-table" id="tableConcurrencyResults">
+              <thead>
+                <tr>
+                  <th>并发档位</th><th>稳态样本</th><th>成功率</th>
+                  <th>实际 RPS</th><th>实际 TPM</th><th>生成 TPS</th>
+                  <th>TTFT(均/P90)</th><th>P50 延迟</th><th>P90 延迟</th>
+                  <th>P99 延迟</th><th>429 拒收</th><th>状态评级</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="empty-row"><td colspan="12">暂无压测数据，点击左侧"开始执行压测评测"启动</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 2: Context & Output Table (直接展示) (LLM 工作区) -->
+        <div data-mode="llm">
+          <div class="section-head">
+            <h3>长上下文 (64k–1M) 与最大输出实际探测明细表</h3>
+          </div>
+          <div class="table-responsive" style="border:1px solid var(--gray-200);">
+            <table class="clean-table" id="tableContextResults">
+              <thead>
+                <tr>
+                  <th>探测类型</th><th>标称梯度</th><th>实际输入 Tokens</th>
+                  <th>实际输出 Tokens</th><th>首字 TTFT</th><th>总耗时</th>
+                  <th>吞吐速度</th><th>HTTP 状态</th><th>截断原因</th><th>判定结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="empty-row"><td colspan="10">暂无长文本探测数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section: GPU 压测结果 (GPU 工作区, 多台各一块) -->
+        <div id="gpuResultSection" data-mode="gpu">
+          <div class="section-head">
+            <h3>GPU 服务器压力测试结果</h3>
+          </div>
+          <div id="gpuEmptyState" class="gpu-empty">
+            <div class="gpu-empty-ico">
+              <svg viewBox="0 0 24 24" width="30" height="30" stroke="currentColor" stroke-width="1.6" fill="none"><rect x="6" y="6" width="12" height="12" rx="2"></rect><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"></path><rect x="10" y="10" width="4" height="4"></rect></svg>
+            </div>
+            <div class="gpu-empty-title">尚未执行 GPU 压测</div>
+            <div class="gpu-empty-text">
+              在左侧「压测配置与执行」中选择一种方式开始:<br>
+              <b>模式 A · SSH 全自动</b> — 可同时添加多台服务器并发压测,平台自动执行并取回结果;<br>
+              <b>模式 B · 手动上传</b> — 下载脚本到服务器自己跑,回传三件产物解析。<br>
+              每台服务器的报告独立生成,均可一键导出 HTML / MD / PDF。
+            </div>
+          </div>
+          <div id="gpuResultBody" class="hidden"></div>
+        </div>
+
+        <!-- Section 3: Live Terminal (直接展示) -->
+        <div>
+          <div class="section-head" style="display:flex; justify-content:space-between; align-items:baseline;">
+            <h3>实时执行终端流 (Live Engine Logs)</h3>
+            <div class="term-actions" style="display:flex; gap:10px; align-items:center;">
+              <button class="btn btn-xs btn-outline" id="btnClearLogs">清空日志</button>
+              <label class="custom-check-clean">
+                <input type="checkbox" id="autoScrollLogs" checked> 自动滚屏
+              </label>
+            </div>
+          </div>
+          <div class="clean-terminal" id="terminalLog" style="border:1px solid #1E1E1E;">
+            <div class="term-row sys">[SYSTEM] 压测引擎 2.5 Pro 就绪 — Swiss Typography Edition</div>
+          </div>
+        </div>
+
+      </div><!-- /dashboard-inner -->
+    </section>
+
+  </main>
+  </div><!-- /workspaceView -->
+
+  <footer class="app-footer">
+    IceBreaker · LLM API 与 GPU 全方位性能压力与基准评测系统 · 纯前端安全无痕运行 · 适用于所有 OpenAI 兼容规范接口
+  </footer>
+
+</div>
+
+<script src="stress-engine.js"></script>
+<script src="charts.js"></script>
+<script src="analyzer.js"></script>
+<script src="report-builder.js"></script>
+<script src="gpu-report-builder.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

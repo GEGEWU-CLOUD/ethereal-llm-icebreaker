@@ -1,0 +1,16 @@
+# LLM API 压力测试系统 - Docker Compose 一键部署
+# 使用:  docker compose up -d   →  访问 http://127.0.0.1:8765 (默认 admin / admin123)
+# 账号持久化在命名卷 llm-bench-data 中, 重建容器不丢失
+services:
+  llm-benchmark:
+    build: .
+    image: llm-benchmark:latest
+    container_name: llm-benchmark
+    ports:
+      - "8765:8765"
+    volumes:
+      - llm-bench-data:/data
+    restart: unless-stopped
+
+volumes:
+  llm-bench-data:
