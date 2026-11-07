@@ -7,7 +7,7 @@ services:
     image: llm-benchmark:latest
     container_name: llm-benchmark
     ports:
-      - "8765:8765"
+      - "${ICE_PORT:-8765}:8765"
     volumes:
       - llm-bench-data:/data
     restart: unless-stopped
