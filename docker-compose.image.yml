@@ -1,9 +1,9 @@
 # IceBreaker · 使用已有镜像直接部署 (无需本地构建)
-# 前置: docker pull registry.cn-hangzhou.aliyuncs.com/zznn/icebreaker:v1
+# 前置: docker pull registry.cn-hangzhou.aliyuncs.com/zznn/llm-benchmark:v1
 # 启动: ICE_PORT=8765 docker compose -f docker-compose.image.yml up -d
 services:
   icebreaker:
-    image: registry.cn-hangzhou.aliyuncs.com/zznn/icebreaker:v1
+    image: registry.cn-hangzhou.aliyuncs.com/zznn/llm-benchmark:v1
     container_name: icebreaker
     ports:
       - "${ICE_PORT:-8765}:8765"
