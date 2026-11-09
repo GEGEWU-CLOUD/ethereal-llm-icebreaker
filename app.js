@@ -1407,11 +1407,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ---------- 批量粘贴机器 (空格/Tab 分隔: IP 端口 用户名 密码) ----------
+  // ---------- 批量粘贴机器 (空格/Tab 分隔) ----------
+  // 密码模式: IP 端口 用户名 密码        → 「识别并填入」
+  // 密钥模式: IP 端口 用户名 密钥路径     → 「识别并填入(密钥)」
 
-  $id('btnGpuPasteFill').addEventListener('click', () => {
+  function gpuParsePasted(mode) {
     const text = ($id('gpuPasteBox').value || '').trim();
-    if (!text) { uiToast('请先粘贴机器信息, 每行: IP 端口 用户名 密码', 'warn', 5200); return; }
+    if (!text) {
+      uiToast(mode === 'key' ? '请先粘贴机器信息, 每行: IP 端口 用户名 密钥路径' : '请先粘贴机器信息, 每行: IP 端口 用户名 密码', 'warn', 5200);
+      return;
+    }
     const list = []; let bad = 0;
     for (const rawLine of text.split(/\r?\n/)) {
       const line = rawLine.trim();
@@ -1422,15 +1427,27 @@ document.addEventListener('DOMContentLoaded', () => {
       const host = parts[0];
       const port = parseInt(parts[1], 10) || 22;
       const username = parts[2] || 'root';
-      const password = parts.slice(3, 5).join(' ');      // 容忍含空格密码
-      const keyPath = parts.length > 5 ? parts[5] : '';
+      let password = '', keyPath = '';
+      if (mode === 'key') {
+        keyPath = parts.slice(3).join(' ');              // 第 4 段起 = 密钥路径
+      } else {
+        password = parts.slice(3, 5).join(' ');          // 容忍含空格密码
+        keyPath = parts.length > 5 ? parts[5] : '';
+      }
       list.push({ host, port, username, password, keyPath, useSudo: username !== 'root' });
     }
-    if (!list.length) { uiToast('未识别到有效机器行 (每行格式: IP 端口 用户名 密码)', 'warn', 5200); return; }
+    if (!list.length) {
+      uiToast(mode === 'key' ? '未识别到有效机器行 (每行格式: IP 端口 用户名 密钥路径)' : '未识别到有效机器行 (每行格式: IP 端口 用户名 密码)', 'warn', 5200);
+      return;
+    }
     gpuFillTargets(list);
-    const msg = '成功识别 ' + list.length + ' 台机器' + (bad ? ', 跳过 ' + bad + ' 行无效数据' : '') + ', 已自动填入列表。';
-    uiToast(msg, 'ok', 4200);    gpuLog('ok', '[粘贴导入] ' + msg + ' (' + list.map(x => gpuTargetKey(x.host, x.port)).join(', ') + ')');
-  });
+    const msg = '成功识别 ' + list.length + ' 台机器' + (bad ? ', 跳过 ' + bad + ' 行无效数据' : '') + (mode === 'key' ? ' (密钥登录)' : '') + ', 已自动填入列表。';
+    uiToast(msg, 'ok', 4200);
+    gpuLog('ok', '[粘贴导入' + (mode === 'key' ? '-密钥' : '') + '] ' + msg + ' (' + list.map(x => gpuTargetKey(x.host, x.port)).join(', ') + ')');
+  }
+
+  $id('btnGpuPasteFill').addEventListener('click', () => gpuParsePasted('password'));
+  $id('btnGpuPasteFillKey').addEventListener('click', () => gpuParsePasted('key'));
 
   // ---------- 表格批量导入机器 (CSV / Excel) ----------
 

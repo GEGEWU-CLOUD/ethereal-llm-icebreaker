@@ -399,9 +399,12 @@
               <span style="font-size:11px;color:var(--gray-400);">CSV/Excel, 列: 主机·端口·用户名·密码·密钥路径·sudo提权</span>
             </div>
             <div class="form-item" style="margin-top:10px;">
-              <label>批量粘贴机器 <small style="color:var(--gray-400);">每行一台: IP 端口 用户名 密码 (空格或 Tab 分隔)</small></label>
-              <textarea id="gpuPasteBox" class="form-input" rows="4" placeholder="10.0.0.10   22    user   passwd&#10;10.0.0.11   22    user   passwd" style="font-family:var(--mono);font-size:12px;resize:vertical;"></textarea>
-              <button type="button" class="btn btn-outline btn-xs" id="btnGpuPasteFill" style="margin-top:6px;">识别并填入</button>
+              <label>批量粘贴机器 <small style="color:var(--gray-400);">每行一台 (空格或 Tab 分隔): 密码登录 → IP 端口 用户名 密码 ｜ 密钥登录 → IP 端口 用户名 密钥路径</small></label>
+              <textarea id="gpuPasteBox" class="form-input" rows="4" placeholder="10.0.0.10   22    user   passwd&#10;10.0.0.11   22    user   /root/.ssh/id_rsa" style="font-family:var(--mono);font-size:12px;resize:vertical;"></textarea>
+              <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-outline btn-xs" id="btnGpuPasteFill">识别并填入 (第4段=密码)</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btnGpuPasteFillKey">识别并填入 (第4段=密钥路径)</button>
+              </div>
             </div>
             <div id="gpuTargetList"></div>
             <button type="button" class="btn btn-outline btn-xs" id="btnGpuAddTarget" style="margin-top:8px;">+ 添加服务器</button>
