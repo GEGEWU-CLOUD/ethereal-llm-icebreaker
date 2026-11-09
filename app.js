@@ -950,6 +950,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="gtr-row">
         <input type="text" class="form-input gtr-host" placeholder="SSH 主机, 如 172.26.1.20">
         <input type="number" class="form-input gtr-port" value="22" min="1" max="65535" title="端口">
+        <button type="button" class="btn btn-primary btn-xs gtr-start" title="单独启动该机器的压测">启动</button>
         <button type="button" class="btn-icon gtr-del" title="移除该服务器">✕</button>
       </div>
       <div class="gtr-row">
@@ -997,11 +998,63 @@ document.addEventListener('DOMContentLoaded', () => {
       if (document.querySelectorAll('.gpu-target-row').length > 1) row.remove();
       else alert('至少保留一台服务器');
     });
+    // ---- 单机启动 (正在压测中的机器: 弹警告, 点击不生效) ----
+    row.querySelector('.gtr-start').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const t = {
+        host: row.querySelector('.gtr-host').value.trim(),
+        port: parseInt(row.querySelector('.gtr-port').value, 10) || 22,
+        username: row.querySelector('.gtr-user').value.trim(),
+        password: row.querySelector('.gtr-pass').value,
+        keyPath: row.querySelector('.gtr-key').value.trim(),
+        useSudo: row.querySelector('.gtr-sudo').checked
+      };
+      const key = gpuTargetKey(t.host, t.port);
+      if (gpuActiveKeys().has(key)) {
+        alert('【' + key + '】正在压测中, 本次点击不生效。\n请等待其完成, 或先在右侧任务区停止该任务。');
+        return;
+      }
+      if (!t.host || !t.username) { alert('请完整填写该机器的主机与用户名'); return; }
+      if (!t.password && !t.keyPath && t.username !== 'root') { alert('【' + t.host + '】缺少密码/密钥'); return; }
+      const burnSeconds = parseInt($id('gpuBurnSec').value, 10) || 1800;
+      btn.disabled = true; btn.textContent = '启动中';
+      try {
+        const r = await fetch('/api/gpu/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...t, burnSeconds })
+        });
+        const d = await r.json();
+        if (d.ok && d.jobId) {
+          gpuJobs[d.jobId] = { status: { phase: 'connecting', host: key }, result: null };
+          gpuLog('system', '[' + key + '] 单机 GPU 压测已启动 (' + Math.round(burnSeconds / 60) + ' 分钟)。');
+          enterWorkspace('gpu');
+          startGpuPolling();
+        } else {
+          alert(d.message || d.error || '启动失败');   // 含后端同机重复启动拦截
+        }
+      } catch (err) {
+        alert('启动请求失败: ' + err.message);
+      } finally {
+        btn.disabled = false; btn.textContent = '启动';
+      }
+    });
     $id('gpuTargetList').appendChild(row);
   }
 
   $id('btnGpuAddTarget').addEventListener('click', () => gpuAddTargetRow());
   gpuAddTargetRow();   // 初始一行
+
+  /** 当前在途机器标识集合 (host 或 host:port) */
+  function gpuActiveKeys() {
+    const s = new Set();
+    for (const j of Object.values(gpuJobs)) {
+      if (['connecting', 'uploading', 'running', 'collecting'].includes(j.status.phase)) {
+        s.add(j.status.host);
+      }
+    }
+    return s;
+  }
+  const gpuTargetKey = (host, port) => (port && port !== 22) ? host + ':' + port : host;
 
   function gpuCollectTargets() {
     return Array.from(document.querySelectorAll('.gpu-target-row')).map(r => ({
@@ -1022,8 +1075,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const burnSeconds = parseInt($id('gpuBurnSec').value, 10) || 1800;
     const btn = $id('btnGpuStart');
     btn.disabled = true; btn.textContent = '启动中…';
-    let started = 0, failed = [];
+    let started = 0, failed = [], skipped = [];
+    const activeNow = gpuActiveKeys();
     for (const t of targets) {
+      const key = gpuTargetKey(t.host, t.port);
+      if (activeNow.has(key)) { skipped.push(key); continue; }
       if (!t.username) { failed.push(`${t.host}: 缺用户名`); continue; }
       if (!t.password && !t.keyPath) { failed.push(`${t.host}: SSH 登录需要密码或密钥 (sudo 免密≠SSH 免密)`); continue; }
       try {
@@ -1043,9 +1099,13 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.disabled = false; btn.textContent = '启动全部压测';
     gpuLog(started ? 'system' : 'error',
       `多机 GPU 压测启动完成: 成功 ${started}/${targets.length} 台` +
+      (skipped.length ? '; 跳过(压测中): ' + skipped.join(', ') : '') +
       (failed.length ? '; 失败: ' + failed.join('; ') : ''));
     if (started) { enterWorkspace('gpu'); startGpuPolling(); }
     else alert('全部启动失败:\n' + failed.join('\n'));
+    if (!started && skipped.length && !failed.length) {
+      alert('以下机器正在压测中, 本次点击不生效:\n' + skipped.join('\n'));
+    }
   });
 
   $id('btnGpuStopAll').addEventListener('click', async () => {
@@ -1276,6 +1336,119 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.disabled = false; btn.innerHTML = orig;
       }
     }
+  });
+
+  // ---------- 表格批量导入机器 (CSV / Excel) ----------
+
+  const GPU_IMPORT_COLS = {
+    host: ['host', '主机', 'ip', '地址', '服务器', 'server', 'address', 'ip地址', '机器'],
+    port: ['port', '端口', 'ssh端口', 'sshport'],
+    username: ['user', 'username', '用户名', '账号', '用户'],
+    password: ['password', 'pass', '密码', 'pwd'],
+    keyPath: ['key', 'keypath', '密钥', '密钥路径', '私钥'],
+    useSudo: ['sudo', 'usesudo', '提权', 'sudo提权', '使用sudo']
+  };
+
+  /** CSV 解析 (支持引号包裹、逗号/分号/Tab 分隔、BOM) */
+  function gpuParseCsv(text) {
+    text = String(text || '').replace(/^\uFEFF/, '');
+    const firstLine = (text.split(/\r?\n/)[0] || '');
+    const delim = [',', ';', '\t'].map(d => ({ d, n: firstLine.split(d).length })).sort((a, b) => b.n - a.n)[0].d;
+    const rows = []; let cur = [], field = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+        else if (c === '"') { q = false; }
+        else { field += c; }
+      } else if (c === '"') { q = true; }
+      else if (c === delim) { cur.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        cur.push(field); field = '';
+        if (cur.some(x => x !== '')) rows.push(cur);
+        cur = [];
+      } else { field += c; }
+    }
+    if (field !== '' || cur.length) { cur.push(field); if (cur.some(x => x !== '')) rows.push(cur); }
+    return rows;
+  }
+
+  /** 表格行 → 机器对象 (按表头模糊识别) */
+  function gpuMapImportRows(rows) {
+    if (!rows || !rows.length) return { err: '表格为空' };
+    const header = rows[0].map(h => String(h || '').trim().toLowerCase());
+    const idx = {};
+    for (const k of Object.keys(GPU_IMPORT_COLS)) {
+      idx[k] = header.findIndex(h => GPU_IMPORT_COLS[k].includes(h));
+    }
+    if (idx.host < 0) {
+      return { err: '未识别到「主机/IP」列。表头需包含: 主机 (或 IP/地址/服务器), 其余列可选: 端口/用户名/密码/密钥路径/sudo提权' };
+    }
+    const list = []; let bad = 0;
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      const host = String(row[idx.host] || '').trim();
+      if (!host) { bad++; continue; }
+      const get = k => (idx[k] >= 0 ? String(row[idx[k]] || '').trim() : '');
+      const sudoRaw = get('useSudo').toLowerCase();
+      list.push({
+        host,
+        port: parseInt(get('port'), 10) || 22,
+        username: get('username') || 'root',
+        password: get('password'),
+        keyPath: get('keyPath'),
+        useSudo: ['是', 'true', '1', 'y', 'yes', '开启', 'on'].includes(sudoRaw)
+      });
+    }
+    return { list, bad };
+  }
+
+  /** 导入结果 → 重建目标行 */
+  function gpuFillTargets(list) {
+    const box = $id('gpuTargetList');
+    box.innerHTML = '';
+    list.forEach(t => gpuAddTargetRow(t));
+    if (!list.length) gpuAddTargetRow();
+  }
+
+  $id('btnGpuImport').addEventListener('click', () => $id('gpuImportFile').click());
+  $id('gpuImportFile').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      let rows;
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.csv') || name.endsWith('.txt')) {
+        rows = gpuParseCsv(await file.text());
+      } else {
+        if (typeof XLSX === 'undefined') { alert('Excel 解析组件未加载 (vendor/xlsx.full.min.js)'); return; }
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+      }
+      const mapped = gpuMapImportRows(rows);
+      if (mapped.err) { alert('导入失败: ' + mapped.err); gpuLog('error', '机器表格导入失败: ' + mapped.err); return; }
+      if (!mapped.list.length) { alert('表格中没有有效机器行'); return; }
+      gpuFillTargets(mapped.list);
+      const msg = `成功导入 ${mapped.list.length} 台机器` + (mapped.bad ? `, 跳过 ${mapped.bad} 行无效数据` : '') + ', 已自动填入下方列表。';
+      alert(msg);
+      gpuLog('ok', '[导入] ' + msg + ' (' + mapped.list.map(t => gpuTargetKey(t.host, t.port)).join(', ') + ')');
+    } catch (err) {
+      alert('解析文件失败: ' + err.message);
+    }
+  });
+
+  // 导入模板下载 (带 BOM, Excel 打开中文不乱码)
+  $id('gpuTplLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    const csv = '\uFEFF主机,端口,用户名,密码,密钥路径,sudo提权\r\n' +
+      '183.240.204.4,2018,user,YourPassword,,是\r\n' +
+      '183.240.204.4,2019,user,YourPassword,,是\r\n' +
+      '172.16.11.20,22,root,,/root/.ssh/id_rsa,否\r\n';
+    downloadBlob(csv, 'IceBreaker机器导入模板.csv', 'text/csv;charset=utf-8');
   });
 
   // ---------- 模式 B: 手动上传产物解析 ----------

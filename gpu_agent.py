@@ -735,10 +735,10 @@ class GpuJob:
 
 
 class GpuJobPool:
-    """多台服务器并发压测任务池 (默认上限 8 个在途任务)"""
+    """多台服务器并发压测任务池 (机器数不设上限; 同一机器同时只允许一个在途任务)"""
 
-    MAX_ACTIVE = 8
-    KEEP_DONE = 12   # 保留最近 N 个已完成任务的结果
+    MAX_ACTIVE = None      # None = 不限制并发机器数
+    KEEP_DONE = 60         # 保留最近 N 个已完成任务的结果
 
     def __init__(self, script_path):
         self.script_path = script_path
@@ -753,11 +753,19 @@ class GpuJobPool:
         self._jobs = {}     # id -> GpuJob (插入序)
 
     def start_job(self, cfg):
+        _ACTIVE = ("connecting", "uploading", "running", "collecting")
         with self._lock:
-            active = sum(1 for j in self._jobs.values()
-                         if j.state.get("phase") in ("connecting", "uploading", "running", "collecting"))
-            if active >= self.MAX_ACTIVE:
-                return None, "并发任务已达上限 ({})，请等待现有任务结束".format(self.MAX_ACTIVE)
+            # 同一台机器(host+port)只允许一个在途任务, 重复启动直接拒绝
+            _hp = (str(cfg.get("host") or "").strip(), int(cfg.get("port") or 22))
+            for j in self._jobs.values():
+                if j.state.get("phase") in _ACTIVE:
+                    jp = (str(j.cfg.get("host") or "").strip(), int(j.cfg.get("port") or 22))
+                    if jp == _hp:
+                        return None, "该机器({}:{})已有进行中的压测任务, 请等待完成或先停止".format(_hp[0], _hp[1])
+            if self.MAX_ACTIVE is not None:
+                active = sum(1 for j in self._jobs.values() if j.state.get("phase") in _ACTIVE)
+                if active >= self.MAX_ACTIVE:
+                    return None, "并发任务已达上限 ({})，请等待现有任务结束".format(self.MAX_ACTIVE)
             job_id = "j{}{}".format(datetime.datetime.now().strftime("%H%M%S"),
                                     secrets.token_hex(3))
             job = GpuJob(job_id, self.script_path, self.tarball_path, cfg)

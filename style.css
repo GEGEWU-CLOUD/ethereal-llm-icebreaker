@@ -1264,3 +1264,6 @@ html[data-theme="dark"] .theme-toggle .ico-moon { display: block; }
   padding: 8px 10px;
   margin-top: 4px;
 }
+
+/* 目标行单机启动按钮 */
+.gtr-start { flex: 0 0 auto; }
