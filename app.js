@@ -203,7 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const wsModeLabel = document.getElementById('wsModeLabel');
 
   function switchBenchMode(mode) {
-    if (mode !== 'llm' && mode !== 'gpu') mode = 'llm';
+    if (mode !== 'llm' && mode !== 'gpu' && mode !== 'npu') mode = 'llm';
     currentBenchMode = mode;
     wsModeLabel.textContent = mode === 'gpu' ? 'GPU 服务器压测工作台'
       : (mode === 'npu' ? 'NPU 服务器压测工作台' : 'LLM API 压测工作台');
