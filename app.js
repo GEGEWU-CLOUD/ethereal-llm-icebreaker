@@ -94,6 +94,75 @@ document.addEventListener('DOMContentLoaded', () => {
     allRawRecords: []
   };
 
+  // ============ 项目内弹窗系统 (替代原生 alert / confirm) ============
+
+  (function initToasts() {
+    const wrap = document.createElement('div');
+    wrap.className = 'toast-wrap';
+    document.body.appendChild(wrap);
+  })();
+
+  const TOAST_ICO = { ok: '✓', error: '✕', warn: '!', info: 'i' };
+
+  /**
+   * 项目内通知: uiToast(message, type='info', duration=3800)
+   * type: ok | error | warn | info; duration 毫秒, 0=不自动消失
+   */
+  function uiToast(message, type = 'info', duration = 3800) {
+    const wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { console.log('[toast]', type, message); return; }
+    // 同文本去重: 已在显示的同类提示重置计时即可
+    for (const el of Array.from(wrap.children)) {
+      if (el.dataset.msg === String(message)) { el.remove(); break; }
+    }
+    const box = document.createElement('div');
+    box.className = 'toast t-' + (TOAST_ICO[type] ? type : 'info');
+    box.dataset.msg = String(message);
+    const ico = document.createElement('span');
+    ico.className = 't-ico'; ico.textContent = TOAST_ICO[type] || 'i';
+    const body = document.createElement('div');
+    body.innerHTML = String(message).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/\n/g, '<br>');
+    const close = document.createElement('button');
+    close.className = 't-close'; close.textContent = '✕'; close.title = '关闭';
+    const kill = () => {
+      if (!box.isConnected) return;
+      box.classList.add('t-out');
+      setTimeout(() => box.remove(), 200);
+    };
+    close.addEventListener('click', kill);
+    box.append(ico, body, close);
+    wrap.appendChild(box);
+    while (wrap.children.length > 5) wrap.firstElementChild.remove();
+    if (duration > 0) setTimeout(kill, duration);
+  }
+
+  /**
+   * 项目内确认框: const yes = await uiConfirm('确定停止全部?')
+   */
+  function uiConfirm(message, okText = '确定', cancelText = '取消') {
+    return new Promise((resolve) => {
+      const dlg = document.createElement('dialog');
+      dlg.className = 'modal-dlg';
+      dlg.innerHTML =
+        '<div class="modal-title">请确认</div>' +
+        '<div style="font-size:13px;line-height:1.7;margin:6px 0 16px;">' +
+        String(message).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>') +
+        '</div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+        '<button type="button" class="btn btn-outline btn-sm" data-r="0">' + cancelText + '</button>' +
+        '<button type="button" class="btn btn-primary btn-sm" data-r="1">' + okText + '</button></div>';
+      const done = (v) => { dlg.close(); dlg.remove(); resolve(v); };
+      dlg.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-r]');
+        if (b) done(b.dataset.r === '1');
+      });
+      dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(false); });
+      document.body.appendChild(dlg);
+      dlg.showModal();
+    });
+  }
+
   // 秒表计时器状态
   let benchmarkStartTime = 0;
   let timerInterval = null;
@@ -221,8 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (d.ok) {
         dlgCp.close();
         appendLog('ok', '密码修改成功, 下次登录请使用新密码。');
-        alert('密码修改成功!下次登录请使用新密码。');
-      } else {
+        uiToast('密码修改成功!下次登录请使用新密码。', 'ok', 4200);      } else {
         errBox.textContent = d.error || '修改失败';
         errBox.classList.remove('hidden');
       }
@@ -417,8 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btnFetchModels.addEventListener('click', async () => {
     applyEngineConfig();
     if (!apiKeyInput.value.trim()) {
-      alert('请先输入 API Key');
-      return;
+      uiToast('请先输入 API Key', 'warn', 4200);      return;
     }
 
     btnFetchModels.textContent = '获取中...';
@@ -470,8 +537,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btnStartBenchmark.addEventListener('click', async () => {
     applyEngineConfig();
     if (!apiKeyInput.value.trim()) {
-      alert('请先填写 API Key 才能开始压测！');
-      apiKeyInput.focus();
+      uiToast('请先填写 API Key 才能开始压测！', 'warn', 4200);      apiKeyInput.focus();
       return;
     }
 
@@ -526,8 +592,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const selectedLevels = Array.from(document.querySelectorAll('input[name="concurrencyLevel"]:checked'))
           .map(el => Number(el.value));
         if (selectedLevels.length === 0) {
-          alert('请至少勾选一个并发等级！');
-          setRunState(false);
+          uiToast('请至少勾选一个并发等级！', 'warn', 4200);          setRunState(false);
           return;
         }
         const reqs = Number(document.getElementById('requestsPerLevel').value || 20);
@@ -545,8 +610,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const selectedTiers = Array.from(document.querySelectorAll('input[name="contextTier"]:checked'))
           .map(el => Number(el.value));
         if (selectedTiers.length === 0) {
-          alert('请至少勾选一个长上下文梯度！');
-          setRunState(false);
+          uiToast('请至少勾选一个长上下文梯度！', 'warn', 4200);          setRunState(false);
           return;
         }
 
@@ -799,8 +863,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       await navigator.clipboard.writeText(reportMd);
-      alert('已将完整的全方位压测诊断分析报告 (Markdown 格式) 复制到剪贴板！');
-      appendLog('ok', '全方位评测报告 Markdown 已成功复制到剪贴板。');
+      uiToast('已将完整的全方位压测诊断分析报告 (Markdown 格式) 复制到剪贴板！', 'ok', 4200);      appendLog('ok', '全方位评测报告 Markdown 已成功复制到剪贴板。');
     } catch (e) {
       const ta = document.createElement('textarea');
       ta.value = reportMd;
@@ -808,8 +871,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ta.select();
       document.execCommand('copy');
       document.body.removeChild(ta);
-      alert('已将完整的全方位压测诊断分析报告 (Markdown 格式) 复制到剪贴板！');
-    }
+      uiToast('已将完整的全方位压测诊断分析报告 (Markdown 格式) 复制到剪贴板！', 'ok', 4200);    }
   });
 
   // 11b. HTML / PDF 报告导出
@@ -856,7 +918,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnExportHtml.addEventListener('click', () => {
     const material = collectReportMaterial();
-    if (!material) { alert('当前还没有可导出的测试数据，请先运行一次压测。'); return; }
+    if (!material) { uiToast('当前还没有可导出的测试数据，请先运行一次压测。', 'warn', 5200); return; }
 
     const html = window.reportBuilder.buildReportHtml(material);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
@@ -871,10 +933,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnExportPdf.addEventListener('click', async () => {
     const material = collectReportMaterial();
-    if (!material) { alert('当前还没有可导出的测试数据，请先运行一次压测。'); return; }
+    if (!material) { uiToast('当前还没有可导出的测试数据，请先运行一次压测。', 'warn', 5200); return; }
     if (typeof html2pdf === 'undefined') {
-      alert('PDF 组件未加载 (vendor/html2pdf.bundle.min.js)，请检查部署完整性。');
-      return;
+      uiToast('PDF 组件未加载 (vendor/html2pdf.bundle.min.js)，请检查部署完整性。', 'error', 6000);      return;
     }
 
     const btn = btnExportPdf;
@@ -905,8 +966,7 @@ document.addEventListener('DOMContentLoaded', () => {
       appendLog('ok', 'PDF 报告已生成并开始下载。');
     } catch (err) {
       console.error(err);
-      alert('PDF 生成失败: ' + (err && err.message ? err.message : err));
-      appendLog('error', 'PDF 生成失败: ' + (err && err.message ? err.message : err));
+      uiToast('PDF 生成失败: ' + (err && err.message ? err.message : err), 'error', 6000);      appendLog('error', 'PDF 生成失败: ' + (err && err.message ? err.message : err));
     } finally {
       holder.remove();
       btn.disabled = false;
@@ -996,8 +1056,7 @@ document.addEventListener('DOMContentLoaded', () => {
     syncSudoUi();
     row.querySelector('.gtr-del').addEventListener('click', () => {
       if (document.querySelectorAll('.gpu-target-row').length > 1) row.remove();
-      else alert('至少保留一台服务器');
-    });
+      else uiToast('至少保留一台服务器', 'warn', 4200);    });
     // ---- 单机启动 (正在压测中的机器: 弹警告, 点击不生效) ----
     row.querySelector('.gtr-start').addEventListener('click', async (e) => {
       const btn = e.currentTarget;
@@ -1011,11 +1070,10 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       const key = gpuTargetKey(t.host, t.port);
       if (gpuActiveKeys().has(key)) {
-        alert('【' + key + '】正在压测中, 本次点击不生效。\n请等待其完成, 或先在右侧任务区停止该任务。');
-        return;
+        uiToast('【' + key + '】正在压测中, 本次点击不生效。\n请等待其完成, 或先在右侧任务区停止该任务。', 'warn', 5200);        return;
       }
-      if (!t.host || !t.username) { alert('请完整填写该机器的主机与用户名'); return; }
-      if (!t.password && !t.keyPath && t.username !== 'root') { alert('【' + t.host + '】缺少密码/密钥'); return; }
+      if (!t.host || !t.username) { uiToast('请完整填写该机器的主机与用户名', 'warn', 5200); return; }
+      if (!t.password && !t.keyPath && t.username !== 'root') { uiToast('【' + t.host + '】缺少密码/密钥', 'warn', 5200); return; }
       const burnSeconds = parseInt($id('gpuBurnSec').value, 10) || 1800;
       btn.disabled = true; btn.textContent = '启动中';
       try {
@@ -1030,11 +1088,10 @@ document.addEventListener('DOMContentLoaded', () => {
           enterWorkspace('gpu');
           startGpuPolling();
         } else {
-          alert(d.message || d.error || '启动失败');   // 含后端同机重复启动拦截
+          uiToast(d.message || d.error || '启动失败', 'error', 5200);   // 含后端同机重复启动拦截
         }
       } catch (err) {
-        alert('启动请求失败: ' + err.message);
-      } finally {
+        uiToast('启动请求失败: ' + err.message, 'error', 6000);      } finally {
         btn.disabled = false; btn.textContent = '启动';
       }
     });
@@ -1071,7 +1128,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $id('btnGpuStart').addEventListener('click', async () => {
     const targets = gpuCollectTargets().filter(t => t.host);
-    if (!targets.length) { alert('请至少填写一台服务器的主机地址'); return; }
+    if (!targets.length) { uiToast('请至少填写一台服务器的主机地址', 'warn', 5200); return; }
     const burnSeconds = parseInt($id('gpuBurnSec').value, 10) || 1800;
     const btn = $id('btnGpuStart');
     btn.disabled = true; btn.textContent = '启动中…';
@@ -1102,14 +1159,12 @@ document.addEventListener('DOMContentLoaded', () => {
       (skipped.length ? '; 跳过(压测中): ' + skipped.join(', ') : '') +
       (failed.length ? '; 失败: ' + failed.join('; ') : ''));
     if (started) { enterWorkspace('gpu'); startGpuPolling(); }
-    else alert('全部启动失败:\n' + failed.join('\n'));
-    if (!started && skipped.length && !failed.length) {
-      alert('以下机器正在压测中, 本次点击不生效:\n' + skipped.join('\n'));
-    }
+    else uiToast('全部启动失败:\n' + failed.join('\n'), 'error', 6000);    if (!started && skipped.length && !failed.length) {
+      uiToast('以下机器正在压测中, 本次点击不生效:\n' + skipped.join('\n'), 'warn', 5200);    }
   });
 
   $id('btnGpuStopAll').addEventListener('click', async () => {
-    if (!confirm('确定停止全部远端 GPU 压测?')) return;
+    if (!(await uiConfirm('确定停止全部远端 GPU 压测?'))) return;
     try {
       await fetch('/api/gpu/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       gpuLog('warn', '已向全部任务发送停止指令。');
@@ -1293,7 +1348,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!btn) return;
     const jobId = btn.getAttribute('data-job');
     const j = gpuJobs[jobId];
-    if (!j || !j.result) { alert('该任务暂无结果'); return; }
+    if (!j || !j.result) { uiToast('该任务暂无结果', 'warn', 5200); return; }
     const parsed = j.result;
     const kind = btn.getAttribute('data-gpu-export');
     const builder = window.gpuReportBuilder;
@@ -1313,19 +1368,18 @@ document.addEventListener('DOMContentLoaded', () => {
           body: JSON.stringify({ html: builder.buildHtmlReport(parsed) })
         });
         const d = await r.json();
-        if (!d.ok) { alert(d.error || '生成失败'); return; }
+        if (!d.ok) { uiToast(d.error || '生成失败', 'error', 5200); return; }
         // 真实 URL: 新标签打开 (被拦截时可右键复制链接)
         const a = document.createElement('a');
         a.href = d.url; a.target = '_blank'; a.rel = 'noopener';
         document.body.appendChild(a); a.click(); a.remove();
         gpuLog('ok', '报告在线查看已生成: ' + d.url);
       } catch (err) {
-        alert('在线查看失败: ' + err.message);
-      } finally {
+        uiToast('在线查看失败: ' + err.message, 'error', 6000);      } finally {
         btn.disabled = false; btn.textContent = orig;
       }
     } else if (kind === 'pdf') {
-      if (typeof html2pdf === 'undefined') { alert('PDF 组件未加载'); return; }
+      if (typeof html2pdf === 'undefined') { uiToast('PDF 组件未加载', 'error', 5200); return; }
       const orig = btn.innerHTML;
       btn.disabled = true; btn.textContent = '生成中…';
       const holder = document.createElement('div');
@@ -1346,8 +1400,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }).from(holder).save();
         gpuLog('ok', `GPU PDF 报告已生成 (${parsed.meta.hostname || jobId})。`);
       } catch (err) {
-        alert('PDF 生成失败: ' + (err && err.message ? err.message : err));
-      } finally {
+        uiToast('PDF 生成失败: ' + (err && err.message ? err.message : err), 'error', 6000);      } finally {
         holder.remove();
         btn.disabled = false; btn.innerHTML = orig;
       }
@@ -1358,7 +1411,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $id('btnGpuPasteFill').addEventListener('click', () => {
     const text = ($id('gpuPasteBox').value || '').trim();
-    if (!text) { alert('请先粘贴机器信息, 每行: IP 端口 用户名 密码'); return; }
+    if (!text) { uiToast('请先粘贴机器信息, 每行: IP 端口 用户名 密码', 'warn', 5200); return; }
     const list = []; let bad = 0;
     for (const rawLine of text.split(/\r?\n/)) {
       const line = rawLine.trim();
@@ -1373,11 +1426,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const keyPath = parts.length > 5 ? parts[5] : '';
       list.push({ host, port, username, password, keyPath, useSudo: username !== 'root' });
     }
-    if (!list.length) { alert('未识别到有效机器行 (每行格式: IP 端口 用户名 密码)'); return; }
+    if (!list.length) { uiToast('未识别到有效机器行 (每行格式: IP 端口 用户名 密码)', 'warn', 5200); return; }
     gpuFillTargets(list);
     const msg = '成功识别 ' + list.length + ' 台机器' + (bad ? ', 跳过 ' + bad + ' 行无效数据' : '') + ', 已自动填入列表。';
-    alert(msg);
-    gpuLog('ok', '[粘贴导入] ' + msg + ' (' + list.map(x => gpuTargetKey(x.host, x.port)).join(', ') + ')');
+    uiToast(msg, 'ok', 4200);    gpuLog('ok', '[粘贴导入] ' + msg + ' (' + list.map(x => gpuTargetKey(x.host, x.port)).join(', ') + ')');
   });
 
   // ---------- 表格批量导入机器 (CSV / Excel) ----------
@@ -1465,22 +1517,20 @@ document.addEventListener('DOMContentLoaded', () => {
       if (name.endsWith('.csv') || name.endsWith('.txt')) {
         rows = gpuParseCsv(await file.text());
       } else {
-        if (typeof XLSX === 'undefined') { alert('Excel 解析组件未加载 (vendor/xlsx.full.min.js)'); return; }
+        if (typeof XLSX === 'undefined') { uiToast('Excel 解析组件未加载 (vendor/xlsx.full.min.js)', 'error', 5200); return; }
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
       }
       const mapped = gpuMapImportRows(rows);
-      if (mapped.err) { alert('导入失败: ' + mapped.err); gpuLog('error', '机器表格导入失败: ' + mapped.err); return; }
-      if (!mapped.list.length) { alert('表格中没有有效机器行'); return; }
+      if (mapped.err) { uiToast('导入失败: ' + mapped.err, 'error', 5200); gpuLog('error', '机器表格导入失败: ' + mapped.err); return; }
+      if (!mapped.list.length) { uiToast('表格中没有有效机器行', 'warn', 5200); return; }
       gpuFillTargets(mapped.list);
       const msg = `成功导入 ${mapped.list.length} 台机器` + (mapped.bad ? `, 跳过 ${mapped.bad} 行无效数据` : '') + ', 已自动填入下方列表。';
-      alert(msg);
-      gpuLog('ok', '[导入] ' + msg + ' (' + mapped.list.map(t => gpuTargetKey(t.host, t.port)).join(', ') + ')');
+      uiToast(msg, 'ok', 4200);      gpuLog('ok', '[导入] ' + msg + ' (' + mapped.list.map(t => gpuTargetKey(t.host, t.port)).join(', ') + ')');
     } catch (err) {
-      alert('解析文件失败: ' + err.message);
-    }
+      uiToast('解析文件失败: ' + err.message, 'error', 6000);    }
   });
 
   // 导入模板下载 (带 BOM, Excel 打开中文不乱码)
@@ -1505,20 +1555,19 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const [reportTxt, telemetryCsv, burnLog] = await Promise.all(
         [read('gpuFileReport'), read('gpuFileTele'), read('gpuFileBurn')]);
-      if (!reportTxt && !telemetryCsv && !burnLog) { alert('请至少选择一个产物文件'); return; }
+      if (!reportTxt && !telemetryCsv && !burnLog) { uiToast('请至少选择一个产物文件', 'warn', 5200); return; }
       const r = await fetch('/api/gpu/parse', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reportTxt, telemetryCsv, burnLog })
       });
       const d = await r.json();
-      if (!d.ok) { alert(d.error || '解析失败'); gpuLog('error', '手动产物解析失败: ' + (d.error || '')); return; }
+      if (!d.ok) { uiToast(d.error || '解析失败', 'error', 5200); gpuLog('error', '手动产物解析失败: ' + (d.error || '')); return; }
       const jid = 'manual_' + Date.now();
       gpuJobs[jid] = { status: { phase: 'done', host: d.result.meta.hostname || '手动上传' }, result: d.result };
       renderGpuResults();
       gpuLog('ok', '手动产物解析完成, 报告已生成。');
     } catch (e) {
-      alert('解析失败: ' + e.message);
-    } finally {
+      uiToast('解析失败: ' + e.message, 'error', 6000);    } finally {
       btn.disabled = false; btn.textContent = '解析并生成报告';
     }
   });

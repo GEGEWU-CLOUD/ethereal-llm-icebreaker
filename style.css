@@ -1267,3 +1267,56 @@ html[data-theme="dark"] .theme-toggle .ico-moon { display: block; }
 
 /* 目标行单机启动按钮 */
 .gtr-start { flex: 0 0 auto; }
+
+/* ── 项目内 Toast 通知 (替代原生 alert) ─────────────────────── */
+.toast-wrap {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(460px, 92vw);
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--white);
+  color: var(--black);
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 12px 34px 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  animation: toast-in .22s ease-out;
+  word-break: break-word;
+}
+.toast .t-ico { flex: none; font-weight: 800; font-size: 13px; margin-top: 1px; }
+.toast.t-ok    { border-color: var(--accent); }
+.toast.t-ok .t-ico    { color: var(--accent); }
+.toast.t-error { border-color: var(--danger); }
+.toast.t-error .t-ico { color: var(--danger); }
+.toast.t-warn  { border-color: #F5A623; }
+.toast.t-warn .t-ico  { color: #C77D00; }
+.toast.t-info  { border-color: #3B9EFF; }
+.toast.t-info .t-ico  { color: #3B9EFF; }
+.toast .t-close {
+  position: absolute; top: 6px; right: 8px;
+  border: none; background: none; cursor: pointer;
+  color: var(--gray-400); font-size: 13px; line-height: 1;
+  padding: 3px 4px;
+}
+.toast .t-close:hover { color: var(--black); }
+.toast.t-out { animation: toast-out .18s ease-in forwards; }
+@keyframes toast-in  { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to   { opacity: 0; transform: translateY(-8px); } }
+@media (prefers-reduced-motion: reduce) {
+  .toast, .toast.t-out { animation: none; }
+}
