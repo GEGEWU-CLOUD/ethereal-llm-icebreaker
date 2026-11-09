@@ -1537,9 +1537,9 @@ document.addEventListener('DOMContentLoaded', () => {
   $id('gpuTplLink').addEventListener('click', (e) => {
     e.preventDefault();
     const csv = '\uFEFF主机,端口,用户名,密码,密钥路径,sudo提权\r\n' +
-      '183.240.204.4,2018,user,YourPassword,,是\r\n' +
-      '183.240.204.4,2019,user,YourPassword,,是\r\n' +
-      '172.16.11.20,22,root,,/root/.ssh/id_rsa,否\r\n';
+      '10.0.0.10,22,user,passwd,,是\r\n' +
+      '10.0.0.11,22,user,passwd,,是\r\n' +
+      '10.0.0.12,22,root,,/root/.ssh/id_rsa,否\r\n';
     downloadBlob(csv, 'IceBreaker机器导入模板.csv', 'text/csv;charset=utf-8');
   });
 
