@@ -393,6 +393,9 @@ def parse_gpu_artifacts(report_txt, telemetry_csv, burn_log, enrich=None):
         "meta": {
             "hostname": enrich.get("hostname") or rep.get("hostname"),
             "ip": enrich.get("ip"),
+            "hostIps": enrich.get("hostIps") or [],
+            "sshHost": enrich.get("sshHost"),
+            "sshPort": enrich.get("sshPort"),
             "systemProduct": rep.get("systemProduct"),
             "cpuModel": rep.get("cpuModel"),
             "cpuThreads": rep.get("cpuThreads"),
@@ -481,9 +484,11 @@ class GpuJob:
         self._ssh = None
         self._sftp = None
         self._cfg_pw = self.cfg.get("password") or ""   # 仅内存
+        _port = int(cfg.get("port") or 22)
+        _host_label = "{}:{}".format(cfg.get("host"), _port) if _port != 22 else cfg.get("host")
         self.state = {
             "phase": "connecting",     # connecting|uploading|running|collecting|done|error|stopped
-            "host": cfg.get("host"), "username": cfg.get("username"),
+            "host": _host_label, "username": cfg.get("username"),
             "burnSeconds": int(cfg.get("burnSeconds", 1800)),
             "remoteDir": None, "startedAt": time.time(), "endedAt": None,
             "error": None, "result": None, "live": [], "progress": 0, "stage": "connecting",
@@ -652,7 +657,9 @@ class GpuJob:
 
             if report_path and not running:
                 with self._lock:
-                    if self.state.get("phase") != "collecting":
+                    # 仅 running 态可进入收集: 防止锁外慢命令期间收集已完成(done)被重复触发
+                    # 的竞态 (二次 _collect 会因会话已关而误报 error, 覆盖成功结果)
+                    if self.state.get("phase") == "running":
                         self._set(phase="collecting")
                         threading.Thread(target=self._collect, args=(report_path,), daemon=True).start()
             elif not running and not report_path and self.state.get("phase") == "running":
@@ -681,6 +688,8 @@ class GpuJob:
 
             sudo = self._sudo_prefix()
             _, host_out, _ = self._exec("hostname")
+            _, ips_out, _ = self._exec("hostname -I 2>/dev/null || hostname --all-ip-addresses 2>/dev/null")
+            host_ips = [x for x in (ips_out or "").split() if x]
             _, gq, _ = self._exec("nvidia-smi --query-gpu=index,name,pci.bus_id,driver_version --format=csv,noheader 2>/dev/null")
             _, aer, _ = self._exec("{s}dmesg 2>/dev/null | grep -i aer | tail -8".format(s=sudo))
             gpu_query = [[c.strip() for c in ln.split(",")] for ln in gq.strip().splitlines() if ln.strip()]
@@ -689,6 +698,8 @@ class GpuJob:
                 report_txt, telemetry_csv, burn_log,
                 enrich={
                     "source": "ssh", "hostname": host_out.strip(),
+                    "hostIps": host_ips,
+                    "sshHost": self.cfg.get("host"), "sshPort": int(self.cfg.get("port") or 22),
                     "gpuQuery": gpu_query, "driver": gpu_query[0][3] if gpu_query else None,
                     "dmesgAer": [x for x in aer.strip().splitlines() if x.strip()],
                     "remoteDir": hw_dir,

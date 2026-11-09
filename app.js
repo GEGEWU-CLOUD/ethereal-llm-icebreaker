@@ -1187,6 +1187,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
           <b style="font-size:14px;">${b.esc(hostLabel || m.hostname || jobId)}</b>
+          ${m.hostIps && m.hostIps.length ? `<span style="font-size:11px;color:var(--gray-400);">IP: ${b.esc(m.hostIps.join(', '))}</span>` : ''}
           <span style="background:${badgeColor};color:#fff;padding:2px 12px;border-radius:999px;font-size:12px;font-weight:700;">${b.esc(parsed.verdict)}</span>
           <span style="font-size:11px;color:var(--gray-400);">${m.burnStart ? b.esc(m.burnStart) + ' · ' : ''}${m.durationSec ? Math.round(m.durationSec / 60) + ' 分钟' : ''}${m.source === 'ssh' ? ' · SSH 自动' : ' · 手动上传'}</span>
         </div>
@@ -1238,10 +1239,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const builder = window.gpuReportBuilder;
 
     if (kind === 'html') {
-      downloadBlob(builder.buildHtmlReport(parsed), builder.buildFilename('html'), 'text/html;charset=utf-8');
+      downloadBlob(builder.buildHtmlReport(parsed), builder.buildFilename(parsed, 'html'), 'text/html;charset=utf-8');
       gpuLog('ok', `GPU HTML 报告已导出 (${parsed.meta.hostname || jobId})。`);
     } else if (kind === 'md') {
-      downloadBlob(builder.buildMarkdownReport(parsed), builder.buildFilename('md'), 'text/markdown;charset=utf-8');
+      downloadBlob(builder.buildMarkdownReport(parsed), builder.buildFilename(parsed, 'md'), 'text/markdown;charset=utf-8');
       gpuLog('ok', `GPU MD 报告已导出 (${parsed.meta.hostname || jobId})。`);
     } else if (kind === 'preview') {
       const url = URL.createObjectURL(new Blob([builder.buildHtmlReport(parsed)], { type: 'text/html' }));
@@ -1261,7 +1262,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.appendChild(holder);
         await html2pdf().set({
           margin: [8, 8, 10, 8],
-          filename: builder.buildFilename('pdf'),
+          filename: builder.buildFilename(parsed, 'pdf'),
           image: { type: 'jpeg', quality: 0.95 },
           html2canvas: { scale: 2, useCORS: true, backgroundColor: '#f3f5f9', logging: false },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },

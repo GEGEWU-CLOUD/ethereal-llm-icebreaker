@@ -185,7 +185,7 @@ footer{color:#9ca3af;font-size:12px;text-align:center;margin-top:8px}
 </style></head><body><div class='wrap'>
 <header class='hero'>
 <h1>GPU 服务器压力测试报告${durMin ? `(${durMin} 分钟满载)` : ''}</h1>
-<div class='sub'>主机:${esc(hostDesc)}</div>
+<div class='sub'>主机:${esc(hostDesc)}${m.hostIps && m.hostIps.length ? ' · IP: ' + esc(m.hostIps.join(', ')) : ''}${m.sshHost ? ' · SSH: ' + esc(m.sshHost + (m.sshPort && m.sshPort !== 22 ? ':' + m.sshPort : '')) : ''}</div>
 <div class='meta'><span>GPU:${esc(gpuDesc)}</span><span>依据:hardware_check.sh(gpu-burn 单精度满载 + 15s 遥测采样)</span>${m.burnStart ? `<span>压测窗口(北京时间):${esc(m.burnStart)} – ${esc((m.burnEnd || '').split(' ').pop() || '')}(${m.durationSec}s,采样 ${sampleCnt} 次/卡)</span>` : ''}</div>
 <div class='badge${badgeCls}'>${esc(parsed.verdict)}</div>
 </div>
@@ -231,7 +231,7 @@ ${chartTemp}${chartPwr}${chartClk}
       ? ((sm.gflopsMax - sm.gflopsMin) / sm.gflopsMax * 100).toFixed(1) : null;
     const L = [];
     L.push(`# GPU 服务器压力测试报告(${durMin} 分钟满载)`, '');
-    L.push(`- **主机**:${[m.hostname, m.ip, m.systemProduct, m.cpuModel ? m.cpuModel + '(' + (m.cpuThreads || '?') + ' 线程)' : '', m.memTotal].filter(Boolean).join(' · ')}`);
+    L.push(`- **主机**:${[m.hostname, m.hostIps && m.hostIps.length ? 'IP: ' + m.hostIps.join('/') : '', m.sshHost ? 'SSH: ' + m.sshHost + (m.sshPort && m.sshPort !== 22 ? ':' + m.sshPort : '') : '', m.systemProduct, m.cpuModel ? m.cpuModel + '(' + (m.cpuThreads || '?') + ' 线程)' : '', m.memTotal].filter(Boolean).join(' · ')}`);
     L.push(`- **GPU**:${gpus.length} × ${gpus[0] ? gpus[0].name : '?'}(驱动 ${m.driver || '?'}${gpus[0] && gpus[0].bus ? ',PCIe Gen4 x16' : ''})`);
     L.push(`- **依据**:《GPU压力测试》文档 hardware_check.sh(gpu-burn 单精度满载 + 15s 遥测采样)`);
     L.push(`- **压测窗口(北京时间)**:${m.burnStart || '?'} – ${m.burnEnd || '?'}(${m.durationSec || '?'} 秒,采样 ${gpus[0] ? gpus[0].sampleCount : 0} 次/卡)`);
@@ -275,9 +275,14 @@ ${chartTemp}${chartPwr}${chartClk}
     return L.join('\n');
   }
 
-  buildFilename(ext) {
-    const ts = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    return `GPU服务器压力测试报告_${ts}.${ext}`;
+  buildFilename(parsed, ext) {
+    const m = (parsed && parsed.meta) || {};
+    const base = (m.hostIps && m.hostIps.length)
+      ? m.hostIps.join('-')
+      : (m.sshHost || m.hostname || 'server');
+    const safe = String(base).replace(/[^0-9A-Za-z.\-]/g, '').slice(0, 60) || 'server';
+    const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return `GPU服务器压力测试报告_${safe}_${d}.${ext}`;
   }
 }
 
