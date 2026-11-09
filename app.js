@@ -205,7 +205,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function switchBenchMode(mode) {
     if (mode !== 'llm' && mode !== 'gpu') mode = 'llm';
     currentBenchMode = mode;
-    wsModeLabel.textContent = mode === 'gpu' ? 'GPU 服务器压测工作台' : 'LLM API 压测工作台';
+    wsModeLabel.textContent = mode === 'gpu' ? 'GPU 服务器压测工作台'
+      : (mode === 'npu' ? 'NPU 服务器压测工作台' : 'LLM API 压测工作台');
     document.querySelectorAll('[data-mode]').forEach(el => {
       el.hidden = (el.getAttribute('data-mode') !== mode);
     });
@@ -219,7 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.scrollTo(0, 0);
     appendLog('system', mode === 'gpu'
       ? '已进入【GPU 服务器压测】工作台。'
-      : '已进入【LLM API 压测】工作台。');
+      : (mode === 'npu' ? '已进入【NPU 服务器压测】工作台。' : '已进入【LLM API 压测】工作台。'));
   }
 
   /** 返回入口选择页 */
@@ -1658,6 +1659,614 @@ document.addEventListener('DOMContentLoaded', () => {
     uiToast('已清空 ' + finished.length + ' 条历史记录', 'ok', 4200);
     gpuLog('system', '[清空历史] 已清空 ' + finished.length + ' 条已结束任务。');
   });
+
+  // ============================ NPU(昇腾) 服务器压测 ============================
+
+  const npuJobs = {};               // jobId -> { status, result }
+  let npuPollTimer = null;
+
+  const npuPhaseMap = {
+    connecting: 'SSH 连接中', uploading: '上传压测脚本', running: 'NPU 压测运行中',
+    collecting: '收集产物并解析', done: '已完成', error: '出错', stopped: '已停止',
+    detecting: '探测组件', installing: '安装中 (数分钟)'
+  };
+  const npuStageMap = {
+    preparing: '健康基线检查中', burning: 'NPU 满载压测中', finalizing: '压测完成 · 汇总中'
+  };
+  const npuPhaseText = (st) => {
+    if (st.device === 'npu-install') return 'ToolBox 安装: ' + (st.note || npuPhaseMap[st.phase] || st.phase);
+    return npuStageMap[st.stage] || npuPhaseMap[st.phase] || st.phase;
+  };
+  function npuLog(type, msg) { appendLog(type, '[NPU] ' + msg); }
+
+  // ---------- 目标行 (与 GPU 行同构, 独立实现) ----------
+
+  function npuAddTargetRow(prefill) {
+    const row = document.createElement('div');
+    row.className = 'gpu-target-row';
+    row.innerHTML = `
+      <div class="gtr-row">
+        <input type="text" class="form-input gtr-host" placeholder="SSH 主机, 如 172.16.11.30">
+        <input type="number" class="form-input gtr-port" value="22" min="1" max="65535" title="端口">
+        <button type="button" class="btn btn-primary btn-xs gtr-start">启动</button>
+        <button type="button" class="btn-icon gtr-del" title="移除该机器">✕</button>
+      </div>
+      <div class="gtr-row">
+        <input type="text" class="form-input gtr-user" placeholder="用户名 (如 root)">
+        <input type="password" class="form-input gtr-pass" placeholder="密码 (SSH 登录)">
+      </div>
+      <div class="gtr-row" style="margin-bottom:0;align-items:center;">
+        <input type="text" class="form-input gtr-key" placeholder="密钥路径 (可选; 支持Linux/Windows路径)">
+        <label class="custom-check-clean gtr-sudo-wrap" title="普通用户提权 (npu-smi/安装需要 root)">
+          <input type="checkbox" class="gtr-sudo" checked> sudo 提权
+        </label>
+      </div>`;
+    if (prefill) {
+      row.querySelector('.gtr-host').value = prefill.host || '';
+      row.querySelector('.gtr-port').value = prefill.port || 22;
+      row.querySelector('.gtr-user').value = prefill.username || '';
+      row.querySelector('.gtr-pass').value = prefill.password || '';
+      row.querySelector('.gtr-key').value = prefill.keyPath || '';
+      if (prefill.useSudo != null) row.querySelector('.gtr-sudo').checked = !!prefill.useSudo;
+    }
+    row.querySelector('.gtr-del').addEventListener('click', () => {
+      if (document.querySelectorAll('#npuTargetList .gpu-target-row').length > 1) row.remove();
+      else uiToast('至少保留一台机器', 'warn', 4200);
+    });
+    // sudo 联动
+    const sudoBox = row.querySelector('.gtr-sudo');
+    const userBox = row.querySelector('.gtr-user');
+    const passBox = row.querySelector('.gtr-pass');
+    const keyBox = row.querySelector('.gtr-key');
+    const syncSudo = () => {
+      const isRoot = userBox.value.trim() === 'root';
+      if (isRoot) sudoBox.checked = false;
+      sudoBox.disabled = isRoot;
+      const sudoOn = sudoBox.checked && !sudoBox.disabled;
+      const keyUsed = keyBox.value.trim() !== '';
+      if (sudoOn) {
+        passBox.placeholder = keyUsed ? 'sudo 密码 (SSH 走密钥; 留空=免密 sudo)' : '密码 (SSH 登录 + sudo 提权; 留空=免密 sudo)';
+      } else {
+        passBox.placeholder = keyUsed ? '密码 (可留空, SSH 走密钥)' : '密码 (SSH 登录)';
+      }
+    };
+    sudoBox.addEventListener('change', syncSudo);
+    userBox.addEventListener('input', syncSudo);
+    keyBox.addEventListener('input', syncSudo);
+    syncSudo();
+    // 单机启动
+    row.querySelector('.gtr-start').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const cfg = {
+        host: row.querySelector('.gtr-host').value.trim(),
+        port: parseInt(row.querySelector('.gtr-port').value, 10) || 22,
+        username: row.querySelector('.gtr-user').value.trim(),
+        password: row.querySelector('.gtr-pass').value,
+        keyPath: row.querySelector('.gtr-key').value.trim(),
+        useSudo: row.querySelector('.gtr-sudo').checked
+      };
+      const key = gpuTargetKey(cfg.host, cfg.port);
+      if (npuActiveKeys().has(key)) {
+        uiToast('【' + key + '】正在压测中, 本次点击不生效。', 'warn', 5200);
+        return;
+      }
+      if (!cfg.host || !cfg.username) { uiToast('请完整填写该机器的主机与用户名', 'warn', 4200); return; }
+      if (!cfg.password && !cfg.keyPath && cfg.username !== 'root') { uiToast('【' + cfg.host + '】缺少密码/密钥', 'warn', 4200); return; }
+      const burnSeconds = parseInt($id('npuBurnSec').value, 10) || 1800;
+      btn.disabled = true; btn.textContent = '启动中';
+      try {
+        const r = await fetch('/api/npu/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...cfg, burnSeconds })
+        });
+        const d = await r.json();
+        if (d.ok && d.jobId) {
+          npuJobs[d.jobId] = { status: { phase: 'connecting', host: key, device: 'npu' }, result: null };
+          npuLog('system', '[' + key + '] 单机 NPU 压测已启动 (' + Math.round(burnSeconds / 60) + ' 分钟)。');
+          enterWorkspace('npu');
+          startNpuPolling();
+        } else {
+          uiToast(d.message || d.error || '启动失败', 'error', 6000);
+        }
+      } catch (err) {
+        uiToast('启动请求失败: ' + err.message, 'error', 6000);
+      } finally {
+        btn.disabled = false; btn.textContent = '启动';
+      }
+    });
+    $id('npuTargetList').appendChild(row);
+  }
+
+  $id('btnNpuAddTarget').addEventListener('click', () => npuAddTargetRow());
+  npuAddTargetRow();
+
+  function npuCollectTargets() {
+    return Array.from(document.querySelectorAll('#npuTargetList .gpu-target-row')).map(r => ({
+      host: r.querySelector('.gtr-host').value.trim(),
+      port: parseInt(r.querySelector('.gtr-port').value, 10) || 22,
+      username: r.querySelector('.gtr-user').value.trim(),
+      password: r.querySelector('.gtr-pass').value,
+      keyPath: r.querySelector('.gtr-key').value.trim(),
+      useSudo: r.querySelector('.gtr-sudo').checked
+    }));
+  }
+
+  function npuActiveKeys() {
+    const s = new Set();
+    for (const j of Object.values(npuJobs)) {
+      if (['connecting', 'uploading', 'running', 'collecting'].includes(j.status.phase)) s.add(j.status.host);
+    }
+    return s;
+  }
+
+  function npuFillTargets(list) {
+    const box = $id('npuTargetList');
+    box.innerHTML = '';
+    list.forEach(t => npuAddTargetRow(t));
+    if (!list.length) npuAddTargetRow();
+  }
+
+  // ---------- 粘贴导入 (密码/密钥双按钮) ----------
+
+  function npuParsePasted(mode) {
+    const text = ($id('npuPasteBox').value || '').trim();
+    if (!text) { uiToast('请先粘贴机器信息, 每行: IP 端口 用户名 密码/密钥路径', 'warn', 5200); return; }
+    const list = []; let bad = 0;
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      if (/^(主机|host|ip)\b/i.test(line)) continue;
+      const parts = line.split(/[\s\u3000]+/).filter(Boolean);
+      if (!parts.length || !/^[-\w.:]+$/.test(parts[0])) { bad++; continue; }
+      const host = parts[0];
+      const port = parseInt(parts[1], 10) || 22;
+      const username = parts[2] || 'root';
+      let password = '', keyPath = '';
+      if (mode === 'key') { keyPath = parts.slice(3).join(' '); }
+      else { password = parts.slice(3, 5).join(' '); keyPath = parts.length > 5 ? parts[5] : ''; }
+      list.push({ host, port, username, password, keyPath, useSudo: username !== 'root' });
+    }
+    if (!list.length) { uiToast('未识别到有效机器行', 'warn', 5200); return; }
+    npuFillTargets(list);
+    const msg = '成功识别 ' + list.length + ' 台 NPU 机器' + (bad ? ', 跳过 ' + bad + ' 行' : '') + ', 已自动填入。';
+    uiToast(msg, 'ok', 4200);
+    npuLog('ok', '[粘贴导入] ' + msg);
+  }
+
+  $id('btnNpuPasteFill').addEventListener('click', () => npuParsePasted('password'));
+  $id('btnNpuPasteFillKey').addEventListener('click', () => npuParsePasted('key'));
+
+  // ---------- NPU 表格批量导入机器 (CSV / Excel) ----------
+
+  $id('btnNpuImport').addEventListener('click', () => $id('npuImportFile').click());
+  $id('npuImportFile').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      let rows;
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.csv') || name.endsWith('.txt')) {
+        rows = gpuParseCsv(await file.text());
+      } else {
+        if (typeof XLSX === 'undefined') { uiToast('Excel 解析组件未加载', 'error', 5200); return; }
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+      }
+      const mapped = gpuMapImportRows(rows);
+      if (mapped.err) { uiToast('导入失败: ' + mapped.err, 'error', 6000); return; }
+      if (!mapped.list.length) { uiToast('表格中没有有效机器行', 'warn', 4200); return; }
+      npuFillTargets(mapped.list);
+      const msg = '成功导入 ' + mapped.list.length + ' 台 NPU 机器' + (mapped.bad ? ', 跳过 ' + mapped.bad + ' 行' : '') + '。';
+      uiToast(msg, 'ok', 4200);
+      npuLog('ok', '[NPU 导入] ' + msg);
+    } catch (err) {
+      uiToast('解析文件失败: ' + err.message, 'error', 6000);
+    }
+  });
+
+  // NPU 模板下载
+  $id('npuTplLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    const csv = '\uFEFF主机,端口,用户名,密码,密钥路径,sudo提权\r\n' +
+      '10.0.0.10,22,user,passwd,,是\r\n' +
+      '10.0.0.11,22,user,passwd,,是\r\n' +
+      '10.0.0.12,22,root,,/root/.ssh/id_rsa,否\r\n';
+    downloadBlob(csv, 'IceBreaker-NPU机器导入模板.csv', 'text/csv;charset=utf-8');
+  });
+
+  // ---------- 启动全部 / 停止 ----------
+
+  $id('btnNpuStart').addEventListener('click', async () => {
+    const targets = npuCollectTargets().filter(t => t.host);
+    if (!targets.length) { uiToast('请至少填写一台机器的主机地址', 'warn', 4200); return; }
+    const burnSeconds = parseInt($id('npuBurnSec').value, 10) || 1800;
+    const btn = $id('btnNpuStart');
+    btn.disabled = true; btn.textContent = '启动中…';
+    let started = 0, failed = [], skipped = [];
+    const activeNow = npuActiveKeys();
+    for (const t of targets) {
+      const key = gpuTargetKey(t.host, t.port);
+      if (activeNow.has(key)) { skipped.push(key); continue; }
+      if (!t.username) { failed.push(t.host + ': 缺用户名'); continue; }
+      if (!t.password && !t.keyPath && t.username !== 'root') { failed.push(t.host + ': 缺密码/密钥'); continue; }
+      try {
+        const r = await fetch('/api/npu/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...t, burnSeconds })
+        });
+        const d = await r.json();
+        if (d.ok && d.jobId) {
+          npuJobs[d.jobId] = { status: { phase: 'connecting', host: key, device: 'npu' }, result: null };
+          started++;
+        } else { failed.push(t.host + ': ' + (d.message || d.error || '启动失败')); }
+      } catch (e) { failed.push(t.host + ': ' + e.message); }
+    }
+    btn.disabled = false; btn.textContent = '启动全部压测';
+    npuLog(started ? 'system' : 'error',
+      'NPU 多机压测启动: 成功 ' + started + '/' + targets.length +
+      (skipped.length ? '; 跳过(压测中): ' + skipped.join(', ') : '') +
+      (failed.length ? '; 失败: ' + failed.join('; ') : ''));
+    if (started) { enterWorkspace('npu'); startNpuPolling(); }
+    else uiToast('全部启动失败:\n' + failed.join('\n'), 'error', 7000);
+  });
+
+  $id('btnNpuStopAll').addEventListener('click', async () => {
+    if (!(await uiConfirm('确定停止全部 NPU 压测?'))) return;
+    try { await fetch('/api/npu/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); npuLog('warn', '已发送停止指令。'); } catch (e) {}
+    setTimeout(startNpuPolling, 1500);
+  });
+
+  // ---------- MindX ToolBox 安装 ----------
+
+  function npuRefreshPkgsHint() {
+    fetch('/api/npu/packages').then(r => r.json()).then(d => {
+      if (!d.ok) return;
+      const hint = $id('npuPkgsHint');
+      const cann = (d.cann || []).join(', ');
+      const tb = (d.toolbox || []).join(', ');
+      hint.innerHTML = d.ready
+        ? '本地安装包就绪: ' + (cann ? 'CANN(' + cann + ') ' : '') + (tb ? 'ToolBox(' + tb + ')' : '')
+        : '未检测到本地安装包。安装 MindX ToolBox 需先从 <a href="https://www.hiascend.com/software" target="_blank" style="color:var(--accent);">昇腾官网</a> 下载与驱动配套的 CANN toolkit 与 MindX ToolBox (.run), 放入项目 packages/ 目录。';
+    }).catch(() => {});
+  }
+  npuRefreshPkgsHint();
+
+  $id('btnNpuToolbox').addEventListener('click', async () => {
+    const targets = npuCollectTargets().filter(t => t.host && t.username);
+    if (!targets.length) { uiToast('请先在上方填写至少一台机器', 'warn', 4200); return; }
+    const pkgs = await fetch('/api/npu/packages').then(r => r.json()).catch(() => ({ ok: false }));
+    if (!pkgs.ok || !pkgs.ready) {
+      uiToast('本地 packages/ 目录没有安装包 (.run)。请先从昇腾官网下载配套版本的 CANN 与 MindX ToolBox 放入 packages/, 再点此按钮。', 'error', 8000);
+      npuRefreshPkgsHint();
+      return;
+    }
+    if (!(await uiConfirm('将对 ' + targets.length + ' 台机器检查并安装 MindX ToolBox (缺失才安装, 已装跳过)?\n安装包较大, 上传与安装需数分钟。'))) return;
+    let queued = 0;
+    for (const t of targets) {
+      try {
+        const r = await fetch('/api/npu/toolbox', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(t)
+        });
+        const d = await r.json();
+        if (d.ok) queued++;
+        else npuLog('warn', '[' + t.host + '] 安装任务未启动: ' + (d.message || ''));
+      } catch (e) { npuLog('error', '[' + t.host + '] 安装请求失败: ' + e.message); }
+    }
+    if (queued) {
+      uiToast('已对 ' + queued + ' 台机器发起 ToolBox 安装, 进度见任务区。', 'ok', 5000);
+      npuLog('system', 'ToolBox 安装任务已发起: ' + queued + ' 台。');
+      enterWorkspace('npu');
+      startNpuPolling();
+    }
+  });
+
+  // ---------- 轮询与任务块 ----------
+
+  function renderNpuJobBlocks() {
+    const wrap = $id('npuJobBlocks');
+    const entries = Object.entries(npuJobs);
+    const anyActive = entries.some(([, j]) => ['connecting', 'uploading', 'running', 'collecting', 'detecting', 'uploading', 'installing'].includes(j.status.phase));
+    $id('npuRunningCount').textContent = entries.filter(([, j]) =>
+      ['connecting', 'uploading', 'running', 'collecting', 'detecting', 'installing'].includes(j.status.phase)).length;
+    $id('npuLiveSection').classList.toggle('hidden', entries.length === 0);
+    $id('btnNpuStopAll').classList.toggle('hidden', !entries.some(([, j]) => ['connecting', 'uploading', 'running', 'collecting'].includes(j.status.phase)));
+
+    wrap.innerHTML = entries.map(([jid, j]) => {
+      const st = j.status || {};
+      const active = ['connecting', 'uploading', 'running', 'collecting', 'detecting', 'installing'].includes(st.phase);
+      const isInstall = st.device === 'npu-install';
+      const phaseColor = st.phase === 'error' ? 'var(--danger)' : (st.phase === 'done' ? 'var(--accent)' : 'var(--gray-600)');
+      const liveRows = (st.live || []).map(g => {
+        const hot = (g.temp || 0) >= 80;
+        return '<tr><td>NPU' + g.index + '</td>' +
+          '<td style="' + (hot ? 'color:var(--danger);font-weight:700' : '') + '">' + (g.temp != null ? g.temp : '-') + (hot ? ' ⚠' : '') + '</td>' +
+          '<td>' + (g.pwr != null ? g.pwr : '-') + '</td><td>' + (g.util != null ? g.util : '-') + '%</td></tr>';
+      }).join('');
+      return `
+      <div class="gpu-job-block" data-job="${jid}">
+        <div class="gjb-head">
+          <b>${j.status.host || jid}${isInstall ? ' ⚙' : ''}</b>
+          <span class="gjb-phase" style="color:${phaseColor}">${npuPhaseText(st)}</span>
+          ${active && !isInstall ? `<span class="gjb-elapsed">${Math.floor((st.elapsed || 0) / 60)}m${(st.elapsed || 0) % 60}s / ${Math.round((st.burnSeconds || 0) / 60)}m</span>
+          <button type="button" class="btn btn-danger btn-xs" data-stopjob="${jid}">停止</button>` : ''}
+          ${st.phase === 'error' ? `<div class="gjb-err">${(st.error || '').slice(0, 160)}</div>` : ''}
+        </div>
+        ${active && !isInstall ? `<div class="gjb-bar"><div style="width:${st.progress || 0}%;background:var(--accent);"></div></div>` : ''}
+        ${(st.live || []).length && !isInstall ? `
+        <table class="clean-table" style="width:100%;font-size:12px;">
+          <thead><tr><th>NPU</th><th>温度℃</th><th>功耗W</th><th>HBM%</th></tr></thead>
+          <tbody>${liveRows}</tbody>
+        </table>` : (active && !isInstall ? '<div class="gjb-waiting">等待遥测…(基线检查中)</div>' : '')}
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('[data-stopjob]').forEach(b => {
+      b.addEventListener('click', async () => {
+        if (!(await uiConfirm('确定停止该任务?'))) return;
+        try { await fetch('/api/npu/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: b.getAttribute('data-stopjob') }) }); } catch (e) {}
+        setTimeout(startNpuPolling, 1200);
+      });
+    });
+  }
+
+  function startNpuPolling() {
+    stopNpuPolling();
+    let busy = false;
+    const tick = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const ctl = new AbortController();
+        const abortT = setTimeout(() => ctl.abort(), 10000);
+        const r = await fetch('/api/npu/status', { signal: ctl.signal });
+        clearTimeout(abortT);
+        if (r.status === 401) { location.replace('/login.html'); return; }
+        const d = await r.json();
+        if (!d.ok || !Array.isArray(d.jobs)) return;
+        let anyActive = false;
+        for (const st of d.jobs) {
+          npuJobs[st.id] = npuJobs[st.id] || { status: st, result: null };
+          npuJobs[st.id].status = st;
+          if (['connecting', 'uploading', 'running', 'collecting', 'detecting', 'installing'].includes(st.phase)) anyActive = true;
+          if (st.hasResult && !npuJobs[st.id].result) {
+            try {
+              const rr = await fetch('/api/npu/result?jobId=' + encodeURIComponent(st.id));
+              const dd = await rr.json();
+              if (dd.ok && dd.result) {
+                npuJobs[st.id].result = dd.result;
+                npuLog('ok', '[' + (st.host || st.id) + '] NPU 压测报告就绪: ' + dd.result.verdict);
+                renderNpuResults();
+              }
+            } catch (e) {}
+          }
+        }
+        renderNpuJobBlocks();
+        if (!anyActive) { stopNpuPolling(); return; }
+      } catch (e) {}
+      finally { busy = false; }
+      npuPollTimer = setTimeout(tick, 5000);
+    };
+    tick();
+  }
+  function stopNpuPolling() {
+    if (npuPollTimer) { clearTimeout(npuPollTimer); npuPollTimer = null; }
+  }
+
+  // ---------- 结果渲染 ----------
+
+  function npuReportBaseName(jobId, j) {
+    const m = (j.result && j.result.meta) || {};
+    const st = j.status || {};
+    let ip = (m.hostIps && m.hostIps[0]) || m.sshHost || '';
+    let port = m.sshPort || '';
+    if (!ip && st.host) { const seg = String(st.host).split(':'); ip = seg[0]; port = port || seg[1] || ''; }
+    if (!ip) ip = m.hostname || 'server';
+    const clean = (s) => String(s || '').replace(/[^0-9A-Za-z._-]/g, '');
+    let base = clean(ip) + (port ? '_' + clean(port) : '');
+    if (String(jobId).startsWith('manual_')) base = '手动上传_' + (clean(m.hostname) || jobId.slice(-6));
+    return base || jobId;
+  }
+
+  function renderNpuResultBlock(jobId, parsed, hostLabel) {
+    const b = window.npuReportBuilder;
+    const m = parsed.meta || {}, sm = parsed.summary || {}, burn = parsed.burn || {};
+    const cards = parsed.npus || [];
+    const kpi = (v, l, color) =>
+      `<div style="border:1px solid var(--gray-200);border-radius:10px;padding:10px 12px;background:var(--gray-100);">` +
+      `<div style="font-size:18px;font-weight:800;color:${color || 'var(--black)'};">${v}</div>` +
+      `<div style="font-size:11px;color:var(--gray-400);">${l}</div></div>`;
+    const rows = cards.map(g =>
+      `<tr><td>NPU${g.index}</td><td>${b.fmt(g.tmax, '°C')}</td><td>${b.fmt(g.pmax, 'W')}</td>` +
+      `<td>${b.fmt(g.hbmMax, '%')}</td><td>${g.sampleCount || 0}</td></tr>`).join('');
+    const clsName = { real: '真实观察', false: '误报', env: '环境限制/待复核', fail: '失败项' };
+    const adjHtml = (parsed.adjudications || []).map(a =>
+      `<div>· [${a.level === 'FAIL' ? '✗' : '⑂'} <b style="color:${a.cls === 'real' ? '#F5A623' : a.cls === 'fail' ? 'var(--danger)' : 'var(--gray-400)'}">${clsName[a.cls] || a.cls}</b>] ${b.esc(a.text)}</div>`
+    ).join('');
+    const badgeColor = parsed.verdictCls === 'pass' ? '#35C46E' : (parsed.verdictCls === 'warn' ? '#F5A623' : 'var(--danger)');
+    return `
+    <div class="gpu-result-block" data-job="${jobId}" style="border:1px solid var(--gray-200);border-radius:12px;padding:16px;margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <b style="font-size:14px;">${b.esc(hostLabel || m.hostname || jobId)}</b>
+          ${m.hostIps && m.hostIps.length ? `<span style="font-size:11px;color:var(--gray-400);">IP: ${b.esc(m.hostIps.join(', '))}</span>` : ''}
+          ${m.model ? `<span style="font-size:11px;color:var(--gray-400);">${b.esc(m.model)}</span>` : ''}
+          <span style="background:${badgeColor};color:#fff;padding:2px 12px;border-radius:999px;font-size:12px;font-weight:700;">${b.esc(parsed.verdict)}</span>
+          ${burn.dmiMissing ? `<span style="font-size:11px;color:#F5A623;">仅基线检查 (ToolBox 未装)</span>` : ''}
+          <span style="font-size:11px;color:var(--gray-400);">${m.burnStart ? b.esc(m.burnStart) + ' · ' : ''}${m.durationSec ? Math.round(m.durationSec / 60) + ' 分钟' : ''}${m.source === 'ssh' ? ' · SSH 自动' : ' · 手动上传'}</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-xs" data-npu-export="html" data-job="${jobId}">导出 HTML</button>
+          <button class="btn btn-secondary btn-xs" data-npu-export="md" data-job="${jobId}">导出 MD</button>
+          <button class="btn btn-secondary btn-xs" data-npu-export="pdf" data-job="${jobId}">导出 PDF</button>
+          <button class="btn btn-outline btn-xs" data-npu-export="preview" data-job="${jobId}">在线查看</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px;">
+        ${kpi(cards.length ? cards.length + ' 张' : '-', 'NPU 数量', 'inherit')}
+        ${kpi(sm.tmaxAll != null ? Math.round(sm.tmaxAll) + '°C' : '-', '最高温度', (sm.tmaxAll || 0) >= 80 ? '#F5A623' : 'inherit')}
+        ${kpi(sm.pmaxAll != null ? Math.round(sm.pmaxAll) + ' W' : '-', '峰值功耗', 'inherit')}
+        ${kpi(burn.dmiMissing ? '未安装' : '已安装', 'MindX ToolBox', burn.dmiMissing ? '#F5A623' : '#35C46E')}
+        ${kpi(burn.passCount != null ? burn.passCount + ' 项' : '-', '健康检查通过', '#35C46E')}
+      </div>
+      <div class="table-responsive" style="border:1px solid var(--gray-200);">
+        <table class="clean-table" style="width:100%;">
+          <thead><tr><th>NPU</th><th>温度峰值</th><th>功耗峰值</th><th>HBM 峰值</th><th>采样数</th></tr></thead>
+          <tbody>${rows || '<tr class="empty-row"><td colspan="5">无逐卡数据</td></tr>'}</tbody>
+        </table>
+      </div>
+      ${adjHtml ? `<div style="font-size:12px;color:var(--gray-400);line-height:1.8;margin-top:8px;">
+        脚本结论: ${b.esc(burn.scriptVerdict || '-')} (PASS ${burn.passCount || 0} / WARN ${burn.warnCount || 0} / FAIL ${burn.failCount || 0})<br>${adjHtml}</div>` : ''}
+    </div>`;
+  }
+
+  function renderNpuResults() {
+    const entries = Object.entries(npuJobs).filter(([, j]) => j.result);
+    $id('npuEmptyState').classList.toggle('hidden', entries.length > 0);
+    $id('npuResultBody').classList.toggle('hidden', entries.length === 0);
+    $id('npuResultBody').innerHTML = entries.map(([jid, j]) =>
+      renderNpuResultBlock(jid, j.result, j.result.jobHost || (j.status && j.status.host) || null)).join('');
+    if (entries.length) enterWorkspace('npu');
+  }
+
+  // NPU 导出 (事件委托: html/md/pdf/preview)
+  $id('npuResultSection').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-npu-export]');
+    if (!btn) return;
+    const jobId = btn.getAttribute('data-job');
+    const j = npuJobs[jobId];
+    if (!j || !j.result) { uiToast('该任务暂无结果', 'warn', 4200); return; }
+    const parsed = j.result;
+    const kind = btn.getAttribute('data-npu-export');
+    const builder = window.npuReportBuilder;
+
+    if (kind === 'html') {
+      downloadBlob(builder.buildHtmlReport(parsed), builder.buildFilename(parsed, 'html'), 'text/html;charset=utf-8');
+      npuLog('ok', 'NPU HTML 报告已导出。');
+    } else if (kind === 'md') {
+      downloadBlob(builder.buildMarkdownReport(parsed), builder.buildFilename(parsed, 'md'), 'text/markdown;charset=utf-8');
+      npuLog('ok', 'NPU MD 报告已导出。');
+    } else if (kind === 'preview') {
+      const orig = btn.textContent;
+      btn.disabled = true; btn.textContent = '生成中…';
+      try {
+        const r = await fetch('/api/gpu/report', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ html: builder.buildHtmlReport(parsed) })
+        });
+        const d = await r.json();
+        if (!d.ok) { uiToast(d.error || '生成失败', 'error', 5200); return; }
+        const a = document.createElement('a');
+        a.href = d.url; a.target = '_blank'; a.rel = 'noopener';
+        document.body.appendChild(a); a.click(); a.remove();
+      } catch (err) {
+        uiToast('在线查看失败: ' + err.message, 'error', 6000);
+      } finally { btn.disabled = false; btn.textContent = orig; }
+    } else if (kind === 'pdf') {
+      if (typeof html2pdf === 'undefined') { uiToast('PDF 组件未加载', 'error', 5200); return; }
+      const orig = btn.innerHTML;
+      btn.disabled = true; btn.textContent = '生成中…';
+      const holder = document.createElement('div');
+      holder.style.cssText = 'position:fixed;left:-20000px;top:0;width:820px;background:#f3f5f9;z-index:-1;';
+      try {
+        const doc = new DOMParser().parseFromString(builder.buildHtmlReport(parsed), 'text/html');
+        const styleEl = doc.querySelector('style');
+        if (styleEl) holder.appendChild(styleEl);
+        while (doc.body.firstChild) holder.appendChild(doc.body.firstChild);
+        document.body.appendChild(holder);
+        await html2pdf().set({
+          margin: [8, 8, 10, 8],
+          filename: builder.buildFilename(parsed, 'pdf'),
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#f3f5f9', logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['css', 'legacy'], avoid: ['.kpi', '.warn-item', 'tr', '.chart'] }
+        }).from(holder).save();
+        npuLog('ok', 'NPU PDF 报告已生成。');
+      } catch (err) {
+        uiToast('PDF 生成失败: ' + (err && err.message ? err.message : err), 'error', 6000);
+      } finally { holder.remove(); btn.disabled = false; btn.innerHTML = orig; }
+    }
+  });
+
+  // NPU ZIP 全部 + 清空
+  $id('btnNpuZipAll').addEventListener('click', async () => {
+    const entries = Object.entries(npuJobs).filter(([, j]) => j.result);
+    if (!entries.length) { uiToast('当前没有可下载的报告', 'warn', 4200); return; }
+    if (typeof fflate === 'undefined' || !fflate.zipSync) { uiToast('ZIP 组件未加载', 'error', 5200); return; }
+    const btn = $id('btnNpuZipAll');
+    btn.disabled = true; btn.textContent = '打包中…';
+    try {
+      const files = {};
+      for (const [jid, j] of entries) {
+        const base = npuReportBaseName(jid, j);
+        files[base + '.html'] = fflate.strToU8(window.npuReportBuilder.buildHtmlReport(j.result));
+        files[base + '.md'] = fflate.strToU8(window.npuReportBuilder.buildMarkdownReport(j.result));
+      }
+      const zipped = fflate.zipSync(files);
+      const url = URL.createObjectURL(new Blob([zipped], { type: 'application/zip' }));
+      const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const a = document.createElement('a');
+      a.href = url; a.download = 'IceBreaker-NPU压测报告_' + entries.length + '台_' + d + '.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      uiToast('已打包 ' + entries.length + ' 台机器的 NPU 报告', 'ok', 4200);
+    } catch (err) {
+      uiToast('打包失败: ' + err.message, 'error', 6000);
+    } finally { btn.disabled = false; btn.textContent = '下载全部报告 (ZIP)'; }
+  });
+
+  $id('btnNpuClearHistory').addEventListener('click', async () => {
+    const finished = Object.entries(npuJobs).filter(([, j]) =>
+      !['connecting', 'uploading', 'running', 'collecting', 'detecting', 'installing'].includes(j.status.phase));
+    if (!finished.length) { uiToast('没有可清空的历史记录', 'warn', 4200); return; }
+    if (!(await uiConfirm('确定清空 ' + finished.length + ' 条已结束的 NPU 记录与报告?'))) return;
+    try { await fetch('/api/npu/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (e) {}
+    for (const [jid] of finished) { delete npuJobs[jid]; }
+    renderNpuJobBlocks();
+    renderNpuResults();
+    uiToast('已清空 ' + finished.length + ' 条 NPU 历史记录', 'ok', 4200);
+  });
+
+  // ---------- NPU 手动上传解析 ----------
+
+  $id('btnNpuParse').addEventListener('click', async () => {
+    const read = (id) => {
+      const f = $id(id).files && $id(id).files[0];
+      return f ? f.text() : Promise.resolve('');
+    };
+    const btn = $id('btnNpuParse');
+    btn.disabled = true; btn.textContent = '解析中…';
+    try {
+      const [reportTxt, telemetryCsv, burnLog] = await Promise.all(
+        [read('npuFileReport'), read('npuFileTele'), read('npuFileBurn')]);
+      if (!reportTxt && !telemetryCsv && !burnLog) { uiToast('请至少选择一个产物文件', 'warn', 4200); return; }
+      const r = await fetch('/api/npu/parse', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportTxt, telemetryCsv, burnLog })
+      });
+      const d = await r.json();
+      if (!d.ok) { uiToast(d.error || '解析失败', 'error', 6000); return; }
+      const jid = 'manual_' + Date.now();
+      npuJobs[jid] = { status: { phase: 'done', host: d.result.meta.hostname || '手动上传', device: 'npu' }, result: d.result };
+      renderNpuResults();
+      npuLog('ok', 'NPU 手动产物解析完成, 报告已生成。');
+    } catch (e) {
+      uiToast('解析失败: ' + e.message, 'error', 6000);
+    } finally {
+      btn.disabled = false; btn.textContent = '解析并生成报告';
+    }
+  });
+
+  // 页面加载恢复 NPU 任务
+  fetch('/api/npu/status').then(r => r.ok ? r.json() : null).then(d => {
+    if (!d || !d.ok || !Array.isArray(d.jobs) || !d.jobs.length) return;
+    const active = d.jobs.filter(st => ['connecting', 'uploading', 'running', 'collecting', 'detecting', 'installing'].includes(st.phase));
+    const withResult = d.jobs.filter(st => st.hasResult);
+    if (active.length || withResult.length) startNpuPolling();
+  }).catch(() => {});
 
   // ---------- 页面加载: 恢复进行中的任务 ----------
 

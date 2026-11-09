@@ -20,7 +20,9 @@ RUN pip install --no-cache-dir paramiko
 # 静态前端 + 后端
 COPY server.py \
      gpu_agent.py \
+     npu_agent.py \
      gpu_check.sh \
+     npu_check.sh \
      index.html \
      login.html \
      style.css \
@@ -31,6 +33,7 @@ COPY server.py \
      stress-engine.js \
      report-builder.js \
      gpu-report-builder.js \
+     npu-report-builder.js \
      ./
 COPY vendor/ ./vendor/
 

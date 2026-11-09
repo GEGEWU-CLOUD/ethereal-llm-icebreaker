@@ -120,6 +120,19 @@
         </span>
         <span class="lc-enter">进入工作台 →</span>
       </button>
+      <button type="button" class="launch-card lc-npu" data-launch="npu">
+        <span class="lc-ico">
+          <svg viewBox="0 0 24 24" width="26" height="26" stroke="currentColor" stroke-width="2" fill="none"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"></path><path d="M9 9h6v6H9z"></path></svg>
+        </span>
+        <span class="lc-title">NPU 服务器压测</span>
+        <span class="lc-sub">昇腾 910/310P · 健康基线 + ascend-dmi 满载</span>
+        <span class="lc-feats">
+          <span>· 昇腾健康基线 + 满载压测(自动探测)</span>
+          <span>· 温度/功耗/HBM 实时遥测</span>
+          <span>· MindX ToolBox 一键安装(可选)</span>
+        </span>
+        <span class="lc-enter">进入工作台 →</span>
+      </button>
     </div>
   </div>
 
@@ -380,6 +393,68 @@
 
         </div>
       </div>
+
+      <!-- NPU 配置卡 (NPU 工作区) -->
+      <div class="ui-card" data-mode="npu" hidden id="npuConfigCard">
+        <div class="card-head">
+          <h3><span class="step-badge wide">NPU</span>压测配置与执行</h3>
+        </div>
+        <div class="card-content">
+          <div class="form-item">
+            <label>模式 A · SSH 全自动执行 <small style="color:var(--gray-400);">(基线+满载自动探测;多台并发;支持密钥登录)</small></label>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+              <button type="button" class="btn btn-outline btn-xs" id="btnNpuImport">导入机器表格</button>
+              <a href="#" id="npuTplLink" style="font-size:11.5px;color:var(--accent);text-decoration:underline;">下载导入模板</a>
+              <input type="file" id="npuImportFile" accept=".csv,.txt,.xlsx,.xls" class="hidden">
+              <span style="font-size:11px;color:var(--gray-400);">CSV/Excel, 列: 主机·端口·用户名·密码·密钥路径·sudo提权</span>
+            </div>
+            <div class="form-item" style="margin-top:10px;">
+              <label>批量粘贴机器 <small style="color:var(--gray-400);">每行一台 (空格或 Tab 分隔): 密码登录 → IP 端口 用户名 密码 ｜ 密钥登录 → IP 端口 用户名 密钥路径</small></label>
+              <textarea id="npuPasteBox" class="form-input" rows="4" placeholder="10.0.0.10   22    user   passwd&#10;10.0.0.11   22    user   /root/.ssh/id_rsa" style="font-family:var(--mono);font-size:12px;resize:vertical;"></textarea>
+              <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-outline btn-xs" id="btnNpuPasteFill">识别并填入 (第4段=密码)</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btnNpuPasteFillKey">识别并填入 (第4段=密钥路径)</button>
+              </div>
+            </div>
+            <div id="npuTargetList"></div>
+            <button type="button" class="btn btn-outline btn-xs" id="btnNpuAddTarget" style="margin-top:8px;">+ 添加服务器</button>
+            <div class="form-item" style="margin-top:12px;">
+              <label for="npuBurnSec">压测时长 (全部机器共用)</label>
+              <select id="npuBurnSec" class="form-select">
+                <option value="60">1 分钟 · 冒烟验证</option>
+                <option value="300">5 分钟 · 快速抽检</option>
+                <option value="1800" selected>30 分钟 · 标准上架 (推荐)</option>
+                <option value="3600">60 分钟 · 深度复验</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+              <button class="btn btn-primary" id="btnNpuStart">启动全部压测</button>
+              <button class="btn btn-danger hidden" id="btnNpuStopAll">停止全部</button>
+              <button class="btn btn-outline" id="btnNpuToolbox" title="对缺失机器上传本地 packages/ 安装包并安装 MindX ToolBox">安装 MindX ToolBox</button>
+            </div>
+            <div id="npuPkgsHint" style="font-size:11px;color:var(--gray-400);margin-top:8px;line-height:1.7;"></div>
+          </div>
+
+          <div class="form-item" style="border-top:1px solid var(--gray-100);padding-top:14px;">
+            <label>手动上传产物解析 <small style="color:var(--gray-400);">(服务器跑完 npu_check.sh 后回传三件产物)</small></label>
+            <div style="font-size:11.5px;color:var(--gray-400);line-height:1.8;margin-bottom:8px;">
+              ① 下载 <a href="npu_check.sh" download style="color:var(--accent);">npu_check.sh</a> 放入服务器执行:<code style="background:var(--gray-100);padding:1px 6px;border-radius:4px;">cd /tmp &amp;&amp; sudo bash npu_check.sh 1800</code><br>
+              ② 产物位于 <code style="background:var(--gray-100);padding:1px 6px;border-radius:4px;">npucheck_*/</code>,上传下方三件
+            </div>
+            <div class="form-item"><label for="npuFileReport">REPORT_*.txt</label><input type="file" id="npuFileReport" class="form-input" accept=".txt,.log"></div>
+            <div class="form-item"><label for="npuFileTele">npu_telemetry.csv</label><input type="file" id="npuFileTele" class="form-input" accept=".csv"></div>
+            <div class="form-item"><label for="npuFileBurn">npu_burn.log</label><input type="file" id="npuFileBurn" class="form-input" accept=".log,.txt"></div>
+            <button class="btn btn-outline" id="btnNpuParse" style="margin-top:6px;">解析并生成报告</button>
+          </div>
+
+          <div id="npuLiveSection" class="hidden" style="margin-top:14px;">
+            <div class="form-item" style="border-top:1px solid var(--gray-100);padding-top:12px;">
+              <label>压测任务实时状态 (<span id="npuRunningCount">0</span> 台在途)</label>
+              <div id="npuJobBlocks"></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </aside>
 
     <!-- ── RIGHT DASHBOARD ── -->
@@ -446,6 +521,8 @@
           </div>
         </div>
       </div>
+
+      <!-- NPU 配置卡 (NPU 工作区) -->
     </aside>
 
     <!-- ── RIGHT DASHBOARD ── -->
@@ -724,6 +801,30 @@
           <div id="gpuResultBody" class="hidden"></div>
         </div>
 
+        <!-- Section: NPU 压测结果 (NPU 工作区, 多台各一块) -->
+        <div id="npuResultSection" data-mode="npu">
+          <div class="section-head" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+            <h3>NPU 服务器压力测试结果</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-secondary btn-xs" id="btnNpuZipAll">下载全部报告 (ZIP)</button>
+              <button type="button" class="btn btn-outline btn-xs" id="btnNpuClearHistory">清空历史记录</button>
+            </div>
+          </div>
+          <div id="npuEmptyState" class="gpu-empty">
+            <div class="gpu-empty-ico">
+              <svg viewBox="0 0 24 24" width="30" height="30" stroke="currentColor" stroke-width="1.6" fill="none"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"></path><path d="M9 9h6v6H9z"></path></svg>
+            </div>
+            <div class="gpu-empty-title">尚未执行 NPU 压测</div>
+            <div class="gpu-empty-text">
+              在左侧「压测配置与执行」中录入昇腾机器开始:<br>
+              <b>自动探测</b> — 有 MindX ToolBox 则满载压测, 无则仅健康基线检查;<br>
+              <b>ToolBox 安装</b> — 缺失时可一键安装(需本地 packages/ 放好安装包)。<br>
+              每台机器的报告独立生成, 可一键导出 HTML / MD / PDF / ZIP。
+            </div>
+          </div>
+          <div id="npuResultBody" class="hidden"></div>
+        </div>
+
         <!-- Section 3: Live Terminal (直接展示) -->
         <div>
           <div class="section-head" style="display:flex; justify-content:space-between; align-items:baseline;">
@@ -757,6 +858,7 @@
 <script src="analyzer.js"></script>
 <script src="report-builder.js"></script>
 <script src="gpu-report-builder.js"></script>
+<script src="npu-report-builder.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

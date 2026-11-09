@@ -1320,3 +1320,8 @@ html[data-theme="dark"] .theme-toggle .ico-moon { display: block; }
 @media (prefers-reduced-motion: reduce) {
   .toast, .toast.t-out { animation: none; }
 }
+
+/* NPU 入口卡片 (绿色系, 区别 GPU 琥珀) */
+.lc-npu .lc-ico { background: rgba(22, 163, 74, 0.12); color: #16A34A; }
+.lc-npu .lc-enter { color: #16A34A; }
+.lc-npu:hover { border-color: #16A34A; }

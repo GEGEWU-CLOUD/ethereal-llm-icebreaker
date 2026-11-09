@@ -153,6 +153,17 @@ def destroy_session(token):
 # ---------------------------- GPU 压测编排 (懒加载) ----------------------------
 
 GPU_MANAGER = None
+NPU_MANAGER = None
+
+def get_npu_manager():
+    """NpuJobPool 单例 (npu_agent 懒加载)"""
+    global NPU_MANAGER
+    if NPU_MANAGER is None:
+        import npu_agent
+        script = os.path.join(ASSET_DIR, 'npu_check.sh')
+        packages = os.path.join(data_root(), 'packages') if not getattr(sys, 'frozen', False) else os.path.join(os.path.dirname(os.path.abspath(sys.executable)), 'packages')
+        NPU_MANAGER = npu_agent.NpuJobPool(script, packages)
+    return NPU_MANAGER
 
 # 在线查看报告的临时存储: token -> html (上限 30 份, 先进先出)
 _REPORT_VIEWS = {}
@@ -270,6 +281,25 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 self._send_json({"ok": False, "error": "未登录"}, 401)
             return
+        # NPU 压测: 状态/结果/安装包状态 (登录态保护)
+        if path == '/api/npu/status':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            return self._send_json({"ok": True, "jobs": get_npu_manager().status_all()})
+        if path == '/api/npu/result':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            job_id = (qs.get('jobId') or [None])[0]
+            result, err = get_npu_manager().get_result(job_id)
+            if result:
+                return self._send_json({"ok": True, "result": result})
+            return self._send_json({"ok": False, "error": err or "暂无结果"}, 404)
+        if path == '/api/npu/packages':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            return self._send_json({"ok": True, **get_npu_manager().packages_status()})
+
         # GPU 压测: 状态与结果 (登录态保护, 多任务池)
         if path == '/api/gpu/status':
             if not self.is_authenticated():
@@ -353,6 +383,94 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             user["passwordChanged"] = datetime.now().isoformat(timespec="seconds")
             save_users(data)
             return self._send_json({"ok": True, "message": "密码已修改, 下次登录使用新密码"})
+
+        # NPU 压测: 启动 / 停止 / 清空 / 解析 / ToolBox 安装
+        if path == '/api/npu/start':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            try:
+                payload = self._read_json_body()
+            except Exception:
+                return self._send_json({"ok": False, "error": "请求体格式错误"}, 400)
+            host = str(payload.get('host') or '').strip()
+            username = str(payload.get('username') or '').strip()
+            password = str(payload.get('password') or '')
+            key_path = str(payload.get('keyPath') or '').strip() or None
+            if not host or not username:
+                return self._send_json({"ok": False, "error": "请填写主机与用户名"}, 400)
+            if not password and not key_path:
+                return self._send_json({"ok": False, "error": "请填写密码或密钥路径"}, 400)
+            try:
+                burn = int(payload.get('burnSeconds') or 1800)
+            except Exception:
+                burn = 1800
+            burn = min(max(burn, 60), 24 * 3600)
+            job_id, msg = get_npu_manager().start_job({
+                "host": host, "port": int(payload.get('port') or 22),
+                "username": username, "password": password, "keyPath": key_path,
+                "burnSeconds": burn,
+                "useSudo": bool(payload.get('useSudo')),
+            })
+            return self._send_json({"ok": bool(job_id), "jobId": job_id, "message": msg},
+                                   200 if job_id else 409)
+
+        if path == '/api/npu/stop':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            try:
+                payload = self._read_json_body()
+            except Exception:
+                payload = {}
+            job_id = str(payload.get('jobId') or '').strip() or None
+            ok, msg = get_npu_manager().stop_job(job_id)
+            return self._send_json({"ok": ok, "message": msg})
+
+        if path == '/api/npu/clear':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            ok, msg = get_npu_manager().clear_finished()
+            return self._send_json({"ok": ok, "message": msg})
+
+        if path == '/api/npu/toolbox':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            try:
+                payload = self._read_json_body()
+            except Exception:
+                return self._send_json({"ok": False, "error": "请求体格式错误"}, 400)
+            host = str(payload.get('host') or '').strip()
+            username = str(payload.get('username') or '').strip()
+            if not host or not username:
+                return self._send_json({"ok": False, "error": "请填写主机与用户名"}, 400)
+            install_id, msg = get_npu_manager().install_toolbox({
+                "host": host, "port": int(payload.get('port') or 22),
+                "username": username, "password": str(payload.get('password') or ''),
+                "keyPath": str(payload.get('keyPath') or '').strip() or None,
+            })
+            return self._send_json({"ok": bool(install_id), "installId": install_id, "message": msg},
+                                   200 if install_id else 409)
+
+        if path == '/api/npu/parse':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            try:
+                payload = self._read_json_body()
+            except Exception:
+                return self._send_json({"ok": False, "error": "请求体格式错误"}, 400)
+            report_txt = str(payload.get('reportTxt') or '')
+            telemetry_csv = str(payload.get('telemetryCsv') or '')
+            burn_log = str(payload.get('burnLog') or '')
+            if not report_txt and not telemetry_csv and not burn_log:
+                return self._send_json({"ok": False, "error": "请至少上传一份产物文件"}, 400)
+            try:
+                import npu_agent
+                parsed = npu_agent.parse_npu_artifacts(
+                    report_txt, telemetry_csv, burn_log,
+                    enrich={"source": "manual",
+                            "hostname": str(payload.get('hostname') or '') or None})
+                return self._send_json({"ok": True, "result": parsed})
+            except Exception as e:
+                return self._send_json({"ok": False, "error": "解析失败: {}".format(e)[:300]}, 500)
 
         # GPU 压测: 启动 / 停止 / 手动产物解析 (登录态保护, 多任务池)
         if path == '/api/gpu/start':
