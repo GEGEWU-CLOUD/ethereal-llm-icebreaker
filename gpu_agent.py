@@ -536,6 +536,56 @@ class GpuJob:
         if not pw:
             return "sudo "
         return "printf '%s\\n' {} | sudo -S -p '' ".format(shlex.quote(pw))
+    # ---------- 文件传输 (SFTP 优先, sshd 禁用 sftp 子系统时自动降级 exec+base64) ----------
+
+    def _upload_file(self, local_path, remote_path, mode=None):
+        """上传本地文件到远端; 返回 True/False 表示是否走的 sftp"""
+        try:
+            sftp = self._sftp or (self._ssh.open_sftp() if self._ssh else None)
+        except Exception:
+            sftp = None
+        if sftp is not None:
+            try:
+                sftp.put(local_path, remote_path)
+                if mode is not None:
+                    sftp.chmod(remote_path, mode)
+                with self._lock:
+                    self._sftp = sftp
+                return True
+            except Exception:
+                pass   # sftp 失败 (如子系统被禁用), 走降级路径
+        # 降级: exec + base64 分块写入
+        import base64 as _b64
+        data = _b64.b64encode(open(local_path, "rb").read()).decode("ascii")
+        size = os.path.getsize(local_path)
+        rq = shlex.quote(remote_path)
+        self._exec("rm -f {r}".format(r=rq))
+        CH = 48000
+        chunks = [data[i:i + CH] for i in range(0, len(data), CH)] or [""]
+        for i, chunk in enumerate(chunks):
+            op = ">" if i == 0 else ">>"
+            self._exec("printf '%s' '{c}' | base64 -d {op} {r}".format(c=chunk, op=op, r=rq), timeout=60)
+        if mode is not None:
+            self._exec("chmod {m:o} {r}".format(m=mode, r=rq))
+        _, out, _ = self._exec("stat -c %s {r} 2>/dev/null || wc -c < {r}".format(r=rq))
+        if out.strip() != str(size):
+            raise RuntimeError("exec 降级上传校验失败: {r} (期望 {n} 字节, 实得 {g})".format(
+                r=remote_path, n=size, g=out.strip() or "?"))
+        return False
+
+    def _download_file(self, remote_path):
+        """读取远端文本文件; sftp 优先, 失败降级 exec+base64"""
+        sftp = self._sftp
+        if sftp is not None:
+            try:
+                with sftp.open(remote_path, "r") as f:
+                    return f.read().decode("utf-8", "replace")
+            except Exception:
+                pass
+        rc, out, _ = self._exec("base64 -w0 {r} 2>/dev/null".format(r=shlex.quote(remote_path)), timeout=120)
+        import base64 as _b64
+        return _b64.b64decode(out.strip() or "").decode("utf-8", "replace")
+
     # ---------- 生命周期 ----------
 
     def start(self):
@@ -547,6 +597,33 @@ class GpuJob:
         except ImportError:
             self._set(phase="error", error="后端未安装 paramiko (pip install paramiko),无法 SSH 自动执行;可使用手动上传产物模式")
             return
+        self._paramiko = paramiko
+        last_err = None
+        for attempt in (1, 2):
+            try:
+                self._run_once()
+                return
+            except paramiko.AuthenticationException:
+                self._set(phase="error", error="SSH 认证失败: 用户名/密码/密钥不匹配")
+                self._close()
+                return
+            except Exception as e:
+                last_err = e
+                if attempt == 1:
+                    # 瞬时故障自愈: NAT 限流/链路抖动 (如 Channel closed / Connection reset) 等 3s 重试一次
+                    with self._lock:
+                        self.state["lastPollError"] = "启动瞬时失败({}), 3 秒后自动重试…".format(str(e))[:120]
+                    self._set(phase="connecting")
+                    self._close()
+                    time.sleep(3)
+                    continue
+        self._set(phase="error", error="SSH 连接/启动失败(已自动重试 1 次): {}".format(last_err))
+        self._close()
+
+    def _run_once(self):
+        paramiko = self._paramiko   # 由 _run 注入
+        self._cfg_pw = self.cfg.get("password") or ""   # 重试时恢复凭据 (_close 会清)
+        cfg = self.cfg
         cfg = self.cfg
         try:
             ssh = paramiko.SSHClient()
@@ -566,14 +643,12 @@ class GpuJob:
             remote_dir = "/tmp/gpubench_{}_{}".format(
                 datetime.datetime.now().strftime("%Y%m%d_%H%M%S"), self.id[-6:])
             self._exec("mkdir -p {}".format(shlex.quote(remote_dir)))
-            sftp = ssh.open_sftp()
-            with self._lock:
-                self._sftp = sftp
-            sftp.put(self.script_path, remote_dir + "/gpu_check.sh")
-            sftp.chmod(remote_dir + "/gpu_check.sh", 0o755)
+            # 上传: sftp 优先, sshd 禁用 sftp 子系统 (open_sftp 即 Channel closed) 时自动降级 exec+base64
+            via_sftp = self._upload_file(self.script_path, remote_dir + "/gpu_check.sh", mode=0o755)
             if self.tarball_path:
-                sftp.put(self.tarball_path, remote_dir + "/gpu-burn.tar.gz")
-            self._set(remoteDir=remote_dir)
+                self._upload_file(self.tarball_path, remote_dir + "/gpu-burn.tar.gz")
+            self._set(remoteDir=remote_dir,
+                      lastNote=("传输方式: sftp" if via_sftp else "传输方式: exec+base64 (该机 sshd 未启用 sftp)"))
 
             sudo = self._sudo_prefix()
             launch = ("cd {d} && {sudo}bash -c 'nohup bash {d}/gpu_check.sh {sec} > {d}/hwcheck.out 2>&1 &'"
@@ -587,9 +662,8 @@ class GpuJob:
                 return
             self._set(phase="running", stage="preparing")
             self._start_refresher()
-        except Exception as e:
-            self._set(phase="error", error="SSH 连接/启动失败: {}".format(e))
-            self._close()
+        except Exception:
+            raise   # 交由 _run 重试壳统一处理
 
     def status(self):
         """HTTP 轮询入口: 只读内存快照, 立即返回 (远端刷新由后台 refresher 线程负责, 请求线程永不阻塞)"""
@@ -674,13 +748,11 @@ class GpuJob:
             st = self.state
             cfg_pw = self._cfg_pw or ""
             hw_dir = os.path.dirname(report_path)
-            sftp = self._sftp or (self._ssh.open_sftp() if self._ssh else None)
-            if sftp is None:
+            if self._ssh is None and self._sftp is None:
                 raise RuntimeError("SSH 会话已关闭")
 
             def get(remote):
-                with sftp.open(remote, "r") as f:
-                    return f.read().decode("utf-8", "replace")
+                return self._download_file(remote)
 
             report_txt = get(report_path)
             telemetry_csv = get(hw_dir + "/gpu_telemetry.csv")
