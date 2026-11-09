@@ -1,140 +1,235 @@
-# 🧊 IceBreaker — LLM API 与 GPU 全方位性能压力与基准评测系统
+# 🧊 IceBreaker — LLM API 与 GPU 服务器全方位性能压力与基准评测系统
 
-专门为大模型 API（兼容 OpenAI 规范）打造的一站式纯前端基准与高并发压测工具。支持直连 **OpenAI、DeepSeek、硅基流动 (SiliconFlow)、阿里通义 DashScope、智谱 GLM、月之暗面 Kimi、本地 Ollama / vLLM** 等各类兼容网关。
+一站式压测平台,覆盖两大测试对象:
 
----
+- **LLM API 压测**: 兼容 OpenAI 规范的各类网关 —— OpenAI、DeepSeek、SiliconFlow、通义 DashScope、智谱 GLM、Kimi、本地 Ollama / vLLM
+- **GPU 服务器压测**: gpu-burn 满载烤机 + 15 秒级遥测采样 + 上架验收报告,支持**多台机器同时并发压测**
 
-## 🌟 核心特性与测试维度
-
-### 1. 梯级并发压测矩阵 (5 / 10 / 20 / 50 / 100)
-- **多阶梯并发调度**：模拟多客户端同时并发请求，支持自定义测试请求量与 Prompt 复杂度。
-- **关键性能指标 (KPI)**：
-  - **实际 RPS & RPM**：测量每秒实际处理请求数与等效每分钟请求数。
-  - **实际 TPS & TPM**：测量 Token 生成速率（tok/s）与等效每分钟总处理 Token 数。
-  - **首字耗时 (TTFT)**：借助流式传输（SSE Stream）毫秒级捕获首个 Token 到达耗时（反映服务端 Prefill 算力与排队延时）。
-  - **延迟分布分位数**：精确统计 P50、P90、P99 延迟，杜绝长尾偏差。
-
-### 2. 极限长上下文承载力探测 (64k / 128k / 256k / 512k / 1M)
-- **多梯度渐进注入**：自动生成经过 Token 密度校准的结构化长文本（64k、128k、256k、512k 直至 1,048,576 Tokens）。
-- **探针验证机制 (Needle In A Haystack)**：在深层上下文注入特征密钥。不仅测试服务端是否返回 `HTTP 200`，更验证模型是否发生注意力弥散或被网关悄默截断。
-- **KV Cache 算力评估**：绘制「上下文深度 vs 首字 Prefill 耗时」曲线。
-
-### 3. 单次最大输出极限探测
-- **突破标称迷雾**：部分厂商宣称支持 8k/16k 输出，但实际在网关侧配置了 4k 截断。本工具注入深度展开任务，要求模型持续吐出极限 Token。
-- **截断原因分析**：抓取 `finish_reason`（`length` 还是 `stop`），输出持续解码速度（tok/s）。
-
-### 4. GPU 服务器压测 (hardware_check / gpu-burn)
-- **SSH 全自动模式**:页面填 SSH 主机/账号,自动上传 `gpu_check.sh` + 离线源码包 `vendor/gpu-burn.tar.gz` → 远端 nohup 后台压测(断开页面不影响,无需访问 GitHub)→ 实时遥测(温度/功耗/利用率)→ 跑完自动取回产物并生成报告(需平台后端 `pip install paramiko`)。
-- **手动上传模式**:下载 `gpu_check.sh` 与 `gpu-burn.tar.gz` 两个文件放入服务器同一目录执行,跑完上传 `REPORT_*.txt / gpu_telemetry.csv / gpu_burn.log` 三件产物,平台解析生成报告(零额外依赖)。
-- gpu-burn 源码已内置(`vendor/gpu-burn.tar.gz`):服务器**离线也能编译压测**,只有当源码包缺失时才回退 git 克隆。
-- **自动报告生成**:与《GPU服务器压力测试报告》样例同款的 HTML / Markdown / PDF 报告——逐卡遥测与算力表、全卡温度/功耗/SM时钟 SVG 曲线(85℃ 告警线)、WARN/FAIL 自动甄别(AER 子串误报 / nouveau 噪声 / 热降频观察项)、结论与建议,一键导出。
-
-### 5. 智能化诊断报告引擎
-- **最佳并发推荐 (Sweet Spot 效益算法)**：
-  $$\text{Score} = \frac{\text{RPS} \times \frac{\text{SuccessRate}}{100}}{\text{P90 Latency}^{0.65}}$$
-  在吞吐提升与响应延时劣化之间自动计算出效能最高的黄金并发点。
-- **压力拐点定位 (Bottleneck Detection)**：
-  - 自动识别触发 **HTTP 429 (Too Many Requests)** 的并发边界。
-  - 自动识别 P90 延迟突变恶化（+100% 以上）的性能拐点。
-  - 给出针对生产网关限流、缓存与超时设置的落地建议。
+登录后选择压测对象卡片进入对应工作台,支持白天/夜间双主题,所有弹窗均为项目内样式。
 
 ---
 
-## 📁 文件目录说明
+## 🌟 核心特性
 
+### LLM API 压测
+- **并发阶梯矩阵 (1/5/10/20/50/100)**: 闭环饱和并发,实测 RPS/RPM、TPS/TPM、TTFT(首字耗时)、TPOT、P50/P90/P99 延迟分布
+- **长上下文极限探测**: 结构化长文本梯度注入 + 针尖探针(Needle In A Haystack)校验,验证注意力是否真的有效而非仅 HTTP 200
+- **单次最大输出探测**: 识别网关侧截断(`finish_reason` 判定 length/stop),实测持续解码速率
+- **智能诊断**: Sweet Spot 最佳并发推荐、压力拐点定位(429 限流边界 / P90 突变点)、落地建议
+
+### GPU 服务器压测
+- **多机并发**: 粘贴/表格批量导入机器,一键同时压测,机器数不设上限(同机在途任务自动防重复)
+- **三种录入方式**: 批量粘贴(密码模式 / 密钥模式两个识别按钮)、CSV/Excel 表格导入(含模板下载)、手动加行
+- **双认证**: 密码或密钥登录(Linux/Windows 密钥路径均可),「sudo 提权」开关支持免密 sudo;密钥登录时密码可仅用于 sudo
+- **单机启动**: 每台机器一个「启动」按钮,可逐台发起;也有「启动全部」
+- **实时遥测**: 每台机器独立任务块 —— 阶段(硬件巡检中 → GPU 满载压测中 → 脚本收尾中)、进度、逐卡温度/功耗/利用率(≥85℃ 标红)、单独停止
+- **稳健传输**: SFTP 被禁用的机器自动降级 exec+base64 传输;SSH 瞬时断连自动重试
+- **报告自动化**: 跑完秒级出报告 —— 逐卡遥测算力表、全卡温度/功耗/SM 时钟 SVG 曲线、WARN 自动甄别(AER 误报/内核噪声/热降频)、结论建议;时间统一北京时间
+- **报告管理**: 单台在线查看(浏览器直达 URL)/导出 HTML·MD·PDF;**一键 ZIP 打包全部报告**(按 内网IP_端口 命名);一键清空历史记录
+
+### 平台能力
+- 登录鉴权(PBKDF2 哈希存储、页面内自助改密、24h 滑动会话)
+- 白天/夜间主题切换(跟随系统 + 手动记忆)
+- HTML / Markdown / PDF 三格式报告(html2pdf 本地渲染,中文无乱码;全资源本地化,离线可用)
+
+---
+
+## 🚀 部署指南(详细)
+
+### 部署方式总览
+
+| 方式 | 适用场景 | 前置条件 |
+|---|---|---|
+| ① 拉取镜像部署 | 生产/服务器,**推荐** | Docker |
+| ② 源码构建部署 | 需要自定义修改后构建 | Docker + git |
+| ③ Windows 本地运行 | 办公机快速使用 | Python 3.7+ |
+| ④ 打包单文件 exe | Windows 免安装分发 | 按需执行 |
+
+---
+
+### 方式一:拉取镜像部署(推荐)
+
+镜像地址:`registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2`
+
+**1. 拉取镜像**
+```bash
+docker pull registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
 ```
-大模型压力测试/
-├── index.html           # 压测仪表盘主页面 (可视化面板、配置表单、实时指标与报告)
-├── login.html           # 登录页面 (账号密码 + Cookie 会话)
-├── style.css            # 暗黑科技感响应式视觉样式表
-├── stress-engine.js     # 压测与探针核心引擎 (流式捕获、并发工作池、长文本生成)
-├── analyzer.js          # 数据分析与诊断引擎 (Sweet Spot、压力拐点定位、Markdown 报告)
-├── report-builder.js    # 自包含 HTML/PDF 报告生成器 (图表快照内嵌)
-├── charts.js            # Chart.js 响应图表管理器 (双轴吞吐、延迟分布、状态码分布)
-├── app.js               # 页面交互控制器、状态暂存与事件绑定
-├── vendor/              # 本地化第三方库 (Chart.js / html2pdf, 离线可用)
-├── server.py            # 后端: 静态托管 + CORS 代理 + 登录鉴权 + 账号管理 (纯标准库)
-├── start.bat            # Windows 一键启动脚本
-├── build_exe.py/.bat    # PyInstaller 打包为单文件 .exe
-├── Dockerfile           # Linux 容器化部署
-├── docker-compose.yml   # Compose 一键部署 (含账号数据持久化卷)
-├── headless-bench.mjs   # 命令行无头压测驱动 (复用同一套引擎)
-└── README.md            # 项目使用与技术说明文档
+
+**2. 启动(二选一)**
+
+A. `docker run` 一条命令:
+```bash
+docker run -d \
+  --name icebreaker \
+  -p 8765:8765 \
+  -v icebreaker-data:/data \
+  --restart unless-stopped \
+  registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+```
+
+| 参数 | 说明 |
+|---|---|
+| `-p 8765:8765` | 端口映射(宿主机:容器);改端口如 `-p 9000:8765` |
+| `-v icebreaker-data:/data` | 账号数据持久化卷(users.json),重建/升级容器不丢失 |
+| `--restart unless-stopped` | 宿主机重启后自动拉起 |
+
+B. `docker compose`(仓库根目录已提供 `docker-compose.image.yml`):
+```bash
+# 默认 8765 端口
+docker compose -f docker-compose.image.yml up -d
+# 自定义端口
+ICE_PORT=9000 docker compose -f docker-compose.image.yml up -d
+```
+
+**3. 密钥登录的机器(如需)**:密钥路径是**容器内路径**,需先挂载:
+```bash
+docker run -d --name icebreaker -p 8765:8765 -v icebreaker-data:/data \
+  -v /root/keys:/keys:ro \
+  --restart unless-stopped \
+  registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+# 平台里密钥路径填 /keys/id_rsa
+```
+
+**4. 访问与首登**:浏览器打开 `http://<服务器IP>:8765`,默认账号 `admin / admin123`,**登录后立即点右上角「改密」修改**。
+
+**5. 升级**:
+```bash
+docker compose -f docker-compose.image.yml pull && \
+docker compose -f docker-compose.image.yml up -d
+```
+
+**6. 运维常用**:
+```bash
+docker compose -f docker-compose.image.yml logs -f    # 日志
+docker compose -f docker-compose.image.yml down       # 停止(数据卷保留)
 ```
 
 ---
 
-## 🚀 快速启动
+### 方式二:源码构建部署
 
-### 方法一：双击打开（最简单）
-双击目录下的 `index.html` 或 `start.bat` 即可直接在浏览器中打开。
-> **提示**：主流大模型 API（如 OpenAI 官方、DeepSeek 官方、SiliconFlow 等）均默认允许跨域调用 (CORS `*`)，直接双击网页即可发起请求。
-
-### 方法二：本地静态服务（推荐）
-如果你调用的自定义私有网关或内网 vLLM 服务有本地浏览器的跨域限制，可以使用 Python 快速启动静态服务器：
 ```bash
-python -m http.server 8080
+git clone <仓库地址> icebreaker && cd icebreaker && ./run.sh
 ```
-然后在浏览器访问：`http://localhost:8080`
 
-### 方法三：完整服务模式（含登录鉴权，Windows/Linux 通用）
+`run.sh` 自动完成:Docker 环境检查 → 构建镜像(利用层缓存,改动小时秒级)→ 启动容器 → 健康检查(最长 60s)→ 打印访问地址与初始账号;失败自动输出容器日志。
+
+- 自定义端口:`ICE_PORT=9000 ./run.sh`
+- 免 clone 管道模式:`curl -fsSL <仓库raw地址>/run.sh | bash -s -- <git仓库地址>`
+- 日常升级同一条:`git pull && ./run.sh`
+- 等价手动操作:`docker compose up -d --build`(compose 文件内置数据卷与重启策略)
+
+> 构建说明:Dockerfile 基于 `python:3.12-slim`,内置 paramiko(GPU SSH 压测)与 gpu-burn 离线源码包;`vendor/` 前端依赖全部本地化,构建与运行均不需要外网(除基础镜像拉取)。
+
+---
+
+### 方式三:Windows 本地运行
+
+**最简单**:双击 `start.bat` —— 自动清理端口占用残留 → 启动服务 → 打开浏览器 `http://127.0.0.1:8765`。
+
+或手动:
 ```bash
-python server.py
+python server.py            # 默认 8765 端口
+BENCH_PORT=9000 python server.py   # 自定义端口 (cmd: set BENCH_PORT=9000)
 ```
-浏览器访问 `http://127.0.0.1:8765`，未登录会自动跳转登录页。**默认账号 `admin / admin123`，首次登录后请立即重置。**
 
-#### 登录与账号管理
+- 要求 Python 3.7+(纯标准库即可跑;GPU SSH 压测需 `pip install paramiko`)
+- 首次启动自动创建账号 `admin / admin123`(存于脚本同目录 `users.json`)
+
+**账号管理(命令行)**:
 ```bash
-python server.py --add-user alice     # 添加账号 (同名执行即重置密码, 密码≥6位)
-python server.py --list-users         # 查看账号列表
+python server.py --add-user alice     # 添加/重置账号 (交互输密码, ≥6位)
+BENCH_PASSWORD=NewPass python server.py --add-user alice   # 非交互(自动化)
+python server.py --list-users         # 列出账号
 python server.py --del-user alice     # 删除账号
 ```
-- 账号存放在 `users.json`（PBKDF2-HMAC-SHA256 单向哈希，不存明文）
-- 会话保存在服务进程内存中，24 小时滑动过期；**服务重启后需重新登录**
-- 环境变量：`BENCH_PORT`（端口，默认 8765）、`BENCH_DATA_DIR`（users.json 存放目录）
+改自己的密码优先用页面:登录后右上角「改密」按钮(验证原密码,即时生效)。
 
-### 方法四：Docker 容器化部署（Linux）
-```bash
-# 方式 A: docker compose 一键起 (账号数据持久化在命名卷, 重建容器不丢)
-docker compose up -d
-
-# 方式 B: 手动构建运行
-docker build -t llm-benchmark .
-docker run -d --name llm-benchmark -p 8765:8765 -v llm-bench-data:/data llm-benchmark
-```
-访问 `http://<主机IP>:8765`，同样默认 `admin / admin123` 首启自动创建。
-
-### 方法五：打包为 Windows 单文件 .exe
-```bash
-build_exe.bat          # 或: python build_exe.py (自动安装 PyInstaller)
-```
-产出 `dist/LLM-Benchmark-Server.exe`，**双击即启动完整服务**（静态前端 + 登录 + CORS 代理），目标机器无需安装 Python。`users.json` 生成在 exe 同目录，升级替换 exe 不丢账号。
+**环境变量**:`BENCH_PORT`(端口)、`BENCH_DATA_DIR`(users.json 目录)。
 
 ---
 
-## 📝 使用步骤
+### 方式四:打包 Windows 单文件 exe(按需)
 
-1. **输入配置**：
-   - 输入 API Base URL（例如 `https://api.deepseek.com/v1` 或点击右上角「预设模版」快速填充）。
-   - 输入你的 API Key（密钥仅保存在当前浏览器的本地 LocalStorage 中，绝对不会上传第三方）。
-   - 输入模型标识（例如 `deepseek-chat` 或点击「拉取列表」从服务端同步）。
-2. **连接验证**：
-   - 点击「验证连接连通性 (Ping 1 次)」，确保网络与密钥无误。
-3. **选择测试模式**：
-   - **一键全方位评测**（推荐）：自动按顺序进行「输出极限探测」$\to$「64k-1M 上下文探测」$\to$「5, 10, 20, 50, 100 并发阶梯压测」，完成后生成全套分析报告。
-   - **单独模块测试**：可独立运行「并发阶梯压测」、「长上下文极限」或「最大输出探测」。
-4. **查看与导出分析结果**：
-   - 顶部实时查看实际 RPM、TPM、最佳并发点、压力崩坏点。
-   - 点击右上角「导出测试数据 (JSON)」保存完整数据包。
-   - 点击「导出 HTML」生成**自包含单文件报告**（图表快照 base64 内嵌，可离线打开/直接归档/发同事）。
-   - 点击「导出 PDF」一键生成 A4 版式 PDF 报告（含 KPI 卡、图表、阶梯表与诊断结论；由内置 html2pdf.js 本地渲染，中文无乱码）。
-   - 点击「复制分析报告 (Markdown)」即可将格式化的专业评测报告直接粘贴到文档中。
-5. **GPU 服务器压测**(压测方案第 5 个 Tab「GPU 压测」):
-   - 自动模式:填 SSH 信息与压测时长 → 「启动 GPU 压测」→ 页面实时看遥测 → 完成后自动出报告。
-   - 手动模式:下载 `gpu_check.sh` 上传服务器 `/tmp` 执行 `sudo ./gpu_check.sh 1800`,跑完把 `hwcheck_*/` 里的三件产物拖入页面上传解析。
-   - 结果区一键「导出 HTML / 导出 MD / 导出 PDF / 预览完整报告」。
-   - 说明:SSH 凭据仅存服务进程内存;会话/任务重启即失效;同时只允许一个 GPU 压测任务。
+```bash
+build_exe.bat     # 或 python build_exe.py
+```
+产出 `dist/LLM-Benchmark-Server.exe`,双击即起完整服务,目标机免装 Python;`users.json` 在 exe 同目录,升级替换不丢账号。
+
+### 镜像发布(维护者)
+
+```bash
+docker compose build
+docker tag llm-benchmark:latest registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+docker login registry.cn-hangzhou.aliyuncs.com
+docker push registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+```
 
 ---
 
-*安全保证：本系统为 100% 纯前端静态架构，所有请求均从本地浏览器直接发往目标大模型服务器，无任何中间服务器中转。*
+## 📝 使用指南
+
+### LLM API 压测工作台
+
+1. 左侧填 Base URL / API Key / 模型(可拉取列表或用预设)→「验证连接」
+2. 选模式:一键全方位 / 并发阶梯 / 长文本极限 / 最大输出 → 开始
+3. 右侧实时 KPI、图表、阶梯表;完成后右上角导出 JSON / HTML / PDF 或复制 Markdown
+
+### GPU 服务器压测工作台
+
+1. **录入机器**(三选一,左侧):
+   - 批量粘贴:每行 `IP 端口 用户名 密码` 或 `IP 端口 用户名 密钥路径`,点对应识别按钮(第4段=密码 / 第4段=密钥路径,支持 Windows 路径)
+   - 表格导入:下载模板 → 填好 → 导入(CSV/Excel)
+   - 手动「+ 添加服务器」
+2. 按需开启每行「sudo 提权」开关(root 自动禁用;免密 sudo 则密码留空)
+3. 选压测时长(1 分钟冒烟 / 5 / 10 / 30 标准 / 60 分钟)→ 逐台「启动」或「启动全部压测」
+4. 右侧任务区实时看遥测;每台跑完自动出结果卡(结论徽章 + KPI + 逐卡表 + 甄别摘要)
+5. 结果区操作:**在线查看**(浏览器打开报告)/ 单台导出 HTML·MD·PDF / **下载全部报告 ZIP(按 内网IP_端口 命名)** / **清空历史记录**
+6. 无法 SSH 的机器:页面下载 `gpu_check.sh` + `gpu-burn.tar.gz` 放服务器 `/tmp` 执行 `sudo ./gpu_check.sh 1800`,跑完上传三件产物手动解析
+
+> 时长说明:所选时长仅是**烧卡段**;脚本前有硬件巡检(约 1~2 分钟)、后有汇总,进度条会按「硬件巡检中 → GPU 满载压测中 → 脚本收尾中」分阶段显示。
+
+---
+
+## ❓ 常见问题
+
+| 问题 | 说明 |
+|---|---|
+| 重启后要重新登录 | 会话存内存(安全设计),24h 滑动过期 |
+| 页面显示旧版界面 | 浏览器缓存,`Ctrl+F5` 强刷一次 |
+| 8765 端口被占 | `start.bat` 会自动清理残留进程;手动:`netstat -ano \| findstr 8765` 后 taskkill |
+| 同公网 IP 不同端口的多台机器 | 完全支持,任务与报告按 `IP:端口` 区分,报告按 `内网IP_端口` 命名 |
+| 某台机器 SFTP 被禁用 | 自动降级 exec+base64 传输,任务块会标注传输方式 |
+| 批量启动偶发某台失败 | 网关/NAT 瞬时限流,平台已自动重试一次;对该台单独再点「启动」即可 |
+| 正在压测的机器再点启动 | 弹项目内警告且点击不生效(前后端双重拦截) |
+| 压测对服务器的影响 | 仅 GPU 满载(硬件保护全程在岗);系统零改动,只在 `/tmp` 留几 MB 产物,错峰生产业务即可 |
+
+---
+
+## 📁 目录结构
+
+```
+IceBreaker/
+├── index.html / login.html     # 主页面(入口卡片/双工作台) / 登录页
+├── style.css / app.js          # 样式(昼夜主题) / 交互控制器
+├── stress-engine.js            # LLM 压测引擎
+├── analyzer.js                 # LLM 分析诊断 (Sweet Spot/拐点)
+├── report-builder.js           # LLM 报告生成器 (HTML/MD/PDF)
+├── gpu_agent.py                # GPU 多机并发编排 + 产物解析 (paramiko)
+├── gpu-report-builder.js       # GPU 报告生成器 (SVG 曲线/甄别)
+├── gpu_check.sh                # 远端压测脚本 (硬件巡检+gpu-burn+遥测)
+├── server.py                   # 后端: 静态托管/登录鉴权/CORS代理/报告托管 (纯标准库)
+├── vendor/                     # 本地化依赖: Chart.js / html2pdf / xlsx / fflate / gpu-burn 源码包
+├── Dockerfile / docker-compose.yml / docker-compose.image.yml / run.sh
+├── start.bat / build_exe.py / DEPLOY.md
+└── headless-bench.mjs          # LLM 命令行无头压测
+```
+
+---
+
+## 🔐 安全说明
+
+- 账号密码 PBKDF2-HMAC-SHA256 哈希存储,绝不存明文;SSH 凭据仅存服务进程内存,重启即清
+- LLM API Key 仅保存在你的浏览器 LocalStorage,直接发往目标 API
+- 报告在线查看链接需登录会话才能访问;建议部署在内网并尽快修改默认密码
