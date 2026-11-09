@@ -1589,6 +1589,76 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // ---------- 一键 ZIP 下载全部报告 / 清空历史 ----------
+
+  /** 报告基础名: 内网IP_端口 (无内网IP时用 SSH 主机_端口; 手动上传用 主机名) */
+  function gpuReportBaseName(jobId, j) {
+    const m = (j.result && j.result.meta) || {};
+    const st = j.status || {};
+    let ip = (m.hostIps && m.hostIps[0]) || m.sshHost || '';
+    let port = m.sshPort || '';
+    if (!ip && st.host) {
+      const seg = String(st.host).split(':');
+      ip = seg[0]; port = port || seg[1] || '';
+    }
+    if (!ip) ip = m.hostname || 'server';
+    const clean = (s) => String(s || '').replace(/[^0-9A-Za-z._-]/g, '');
+    let base = clean(ip) + (port ? '_' + clean(port) : '');
+    if (String(jobId).startsWith('manual_')) base = '手动上传_' + (clean(m.hostname) || jobId.slice(-6));
+    return base || jobId;
+  }
+
+  $id('btnGpuZipAll').addEventListener('click', async () => {
+    const entries = Object.entries(gpuJobs).filter(([, j]) => j.result);
+    if (!entries.length) { uiToast('当前没有可下载的报告', 'warn', 4200); return; }
+    if (typeof fflate === 'undefined' || !fflate.zipSync) {
+      uiToast('ZIP 组件未加载 (vendor/fflate.min.js)', 'error', 5200); return;
+    }
+    const btn = $id('btnGpuZipAll');
+    btn.disabled = true; btn.textContent = '打包中…';
+    try {
+      const files = {};
+      for (const [jid, j] of entries) {
+        const base = gpuReportBaseName(jid, j);
+        files[base + '.html'] = fflate.strToU8(window.gpuReportBuilder.buildHtmlReport(j.result));
+        files[base + '.md'] = fflate.strToU8(window.gpuReportBuilder.buildMarkdownReport(j.result));
+      }
+      const zipped = fflate.zipSync(files);
+      const blob = new Blob([zipped], { type: 'application/zip' });
+      const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `IceBreaker压测报告_${entries.length}台_${d}.zip`;
+      document.body.appendChild(a);   // 挂载后点击, 兼容更多浏览器内核
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      uiToast('已打包 ' + entries.length + ' 台机器的报告 (HTML+MD 各一份)', 'ok', 4200);
+      gpuLog('ok', '[报告打包] ' + entries.length + ' 台: ' + entries.map(([jid, j]) => gpuReportBaseName(jid, j)).join(', '));
+    } catch (err) {
+      uiToast('打包失败: ' + err.message, 'error', 6000);
+    } finally {
+      btn.disabled = false; btn.textContent = '下载全部报告 (ZIP)';
+    }
+  });
+
+  $id('btnGpuClearHistory').addEventListener('click', async () => {
+    const finished = Object.entries(gpuJobs).filter(([, j]) =>
+      !['connecting', 'uploading', 'running', 'collecting'].includes(j.status.phase));
+    if (!finished.length) { uiToast('没有可清空的历史记录', 'warn', 4200); return; }
+    const yes = await uiConfirm('确定清空 ' + finished.length + ' 条已结束的压测记录与报告?\n(在途任务不受影响)');
+    if (!yes) return;
+    try {
+      await fetch('/api/gpu/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    } catch (e) { /* 服务端清理失败也继续清本地展示 */ }
+    for (const [jid, j] of finished) { delete gpuJobs[jid]; }
+    renderGpuJobBlocks();
+    renderGpuResults();
+    uiToast('已清空 ' + finished.length + ' 条历史记录', 'ok', 4200);
+    gpuLog('system', '[清空历史] 已清空 ' + finished.length + ' 条已结束任务。');
+  });
+
   // ---------- 页面加载: 恢复进行中的任务 ----------
 
   fetch('/api/gpu/status').then(r => r.ok ? r.json() : null).then(d => {

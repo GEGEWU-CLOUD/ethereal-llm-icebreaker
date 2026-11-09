@@ -9,6 +9,7 @@
   <script src="vendor/chart.umd.min.js"></script>
   <script src="vendor/html2pdf.bundle.min.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
+  <script src="vendor/fflate.min.js"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -701,8 +702,12 @@
 
         <!-- Section: GPU 压测结果 (GPU 工作区, 多台各一块) -->
         <div id="gpuResultSection" data-mode="gpu">
-          <div class="section-head">
+          <div class="section-head" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
             <h3>GPU 服务器压力测试结果</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-secondary btn-xs" id="btnGpuZipAll">下载全部报告 (ZIP)</button>
+              <button type="button" class="btn btn-outline btn-xs" id="btnGpuClearHistory">清空历史记录</button>
+            </div>
           </div>
           <div id="gpuEmptyState" class="gpu-empty">
             <div class="gpu-empty-ico">

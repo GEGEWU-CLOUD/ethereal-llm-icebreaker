@@ -384,6 +384,12 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             return self._send_json({"ok": bool(job_id), "jobId": job_id, "message": msg},
                                    200 if job_id else 409)
 
+        if path == '/api/gpu/clear':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            ok, msg = get_gpu_manager().clear_finished()
+            return self._send_json({"ok": ok, "message": msg})
+
         if path == '/api/gpu/stop':
             if not self.is_authenticated():
                 return self._send_json({"ok": False, "error": "未登录"}, 401)
