@@ -154,6 +154,10 @@ def destroy_session(token):
 
 GPU_MANAGER = None
 
+# 在线查看报告的临时存储: token -> html (上限 30 份, 先进先出)
+_REPORT_VIEWS = {}
+_REPORT_VIEWS_LOCK = threading.Lock()
+
 def get_gpu_manager():
     """GpuJobPool 单例 (gpu_agent 懒加载, paramiko 未装时不影响其他功能)"""
     global GPU_MANAGER
@@ -280,6 +284,23 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             if result:
                 return self._send_json({"ok": True, "result": result})
             return self._send_json({"ok": False, "error": err or "暂无结果"}, 404)
+        # 在线查看报告 (浏览器直接打开的 HTML 页面)
+        if path.startswith('/api/gpu/report/'):
+            if not self.is_authenticated():
+                return self._reject_unauthenticated()
+            token = path.split('/api/gpu/report/', 1)[1].strip('/')
+            with _REPORT_VIEWS_LOCK:
+                html = _REPORT_VIEWS.get(token)
+            if html is None:
+                return self._send_json({"ok": False, "error": "报告不存在或已过期, 请重新生成"}, 404)
+            body = html.encode('utf-8')
+            self._send_cors_headers(200, content_type="text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if path.startswith('/api/'):
             self._send_json({"error": "Not found"}, 404)
             return
@@ -397,6 +418,26 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json({"ok": True, "result": parsed})
             except Exception as e:
                 return self._send_json({"ok": False, "error": "解析失败: {}".format(e)[:300]}, 500)
+
+        # 报告在线查看: 前端提交已生成的 HTML, 返回浏览器可直达的 URL
+        if path == '/api/gpu/report':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            try:
+                payload = self._read_json_body()
+            except Exception:
+                return self._send_json({"ok": False, "error": "请求体格式错误"}, 400)
+            html = str(payload.get('html') or '')
+            if not html:
+                return self._send_json({"ok": False, "error": "html 内容为空"}, 400)
+            if len(html) > 8 * 1024 * 1024:
+                return self._send_json({"ok": False, "error": "报告内容过大"}, 413)
+            token = secrets.token_hex(8)
+            with _REPORT_VIEWS_LOCK:
+                _REPORT_VIEWS[token] = html
+                while len(_REPORT_VIEWS) > 30:
+                    _REPORT_VIEWS.pop(next(iter(_REPORT_VIEWS)))
+            return self._send_json({"ok": True, "url": "/api/gpu/report/" + token})
 
         if path.startswith('/api/'):
             return self._send_json({"error": "Not found"}, 404)

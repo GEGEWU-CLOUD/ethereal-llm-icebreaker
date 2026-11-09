@@ -1255,7 +1255,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <button class="btn btn-secondary btn-xs" data-gpu-export="html" data-job="${jobId}">导出 HTML</button>
           <button class="btn btn-secondary btn-xs" data-gpu-export="md" data-job="${jobId}">导出 MD</button>
           <button class="btn btn-secondary btn-xs" data-gpu-export="pdf" data-job="${jobId}">导出 PDF</button>
-          <button class="btn btn-outline btn-xs" data-gpu-export="preview" data-job="${jobId}">预览</button>
+          <button class="btn btn-outline btn-xs" data-gpu-export="preview" data-job="${jobId}">在线查看</button>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px;">
@@ -1305,9 +1305,25 @@ document.addEventListener('DOMContentLoaded', () => {
       downloadBlob(builder.buildMarkdownReport(parsed), builder.buildFilename(parsed, 'md'), 'text/markdown;charset=utf-8');
       gpuLog('ok', `GPU MD 报告已导出 (${parsed.meta.hostname || jobId})。`);
     } else if (kind === 'preview') {
-      const url = URL.createObjectURL(new Blob([builder.buildHtmlReport(parsed)], { type: 'text/html' }));
-      window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      const orig = btn.textContent;
+      btn.disabled = true; btn.textContent = '生成中…';
+      try {
+        const r = await fetch('/api/gpu/report', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ html: builder.buildHtmlReport(parsed) })
+        });
+        const d = await r.json();
+        if (!d.ok) { alert(d.error || '生成失败'); return; }
+        // 真实 URL: 新标签打开 (被拦截时可右键复制链接)
+        const a = document.createElement('a');
+        a.href = d.url; a.target = '_blank'; a.rel = 'noopener';
+        document.body.appendChild(a); a.click(); a.remove();
+        gpuLog('ok', '报告在线查看已生成: ' + d.url);
+      } catch (err) {
+        alert('在线查看失败: ' + err.message);
+      } finally {
+        btn.disabled = false; btn.textContent = orig;
+      }
     } else if (kind === 'pdf') {
       if (typeof html2pdf === 'undefined') { alert('PDF 组件未加载'); return; }
       const orig = btn.innerHTML;
@@ -1336,6 +1352,32 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.disabled = false; btn.innerHTML = orig;
       }
     }
+  });
+
+  // ---------- 批量粘贴机器 (空格/Tab 分隔: IP 端口 用户名 密码) ----------
+
+  $id('btnGpuPasteFill').addEventListener('click', () => {
+    const text = ($id('gpuPasteBox').value || '').trim();
+    if (!text) { alert('请先粘贴机器信息, 每行: IP 端口 用户名 密码'); return; }
+    const list = []; let bad = 0;
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      if (/^(主机|host|ip)\b/i.test(line)) continue;   // 跳过表头行
+      const parts = line.split(/[\s\u3000]+/).filter(Boolean);
+      if (!parts.length || !/^[-\w.:]+$/.test(parts[0])) { bad++; continue; }
+      const host = parts[0];
+      const port = parseInt(parts[1], 10) || 22;
+      const username = parts[2] || 'root';
+      const password = parts.slice(3, 5).join(' ');      // 容忍含空格密码
+      const keyPath = parts.length > 5 ? parts[5] : '';
+      list.push({ host, port, username, password, keyPath, useSudo: username !== 'root' });
+    }
+    if (!list.length) { alert('未识别到有效机器行 (每行格式: IP 端口 用户名 密码)'); return; }
+    gpuFillTargets(list);
+    const msg = '成功识别 ' + list.length + ' 台机器' + (bad ? ', 跳过 ' + bad + ' 行无效数据' : '') + ', 已自动填入列表。';
+    alert(msg);
+    gpuLog('ok', '[粘贴导入] ' + msg + ' (' + list.map(x => gpuTargetKey(x.host, x.port)).join(', ') + ')');
   });
 
   // ---------- 表格批量导入机器 (CSV / Excel) ----------
