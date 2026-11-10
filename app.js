@@ -1081,7 +1081,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const r = await fetch('/api/gpu/start', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine() })
+          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine(), precision: gpuGetPrecision() })
         });
         const d = await r.json();
         if (d.ok && d.jobId) {
@@ -1208,6 +1208,18 @@ document.addEventListener('DOMContentLoaded', () => {
     return c ? c.value : 'gpu-burn';
   }
 
+  function gpuGetPrecision() {
+    const c = document.querySelector('input[name="gpuPrecision"]:checked');
+    return c ? c.value : 'fp16';
+  }
+
+  function gpuSyncPrecisionUI() {
+    const wrap = document.getElementById('gpuPrecisionWrap');
+    if (wrap) wrap.hidden = gpuGetEngine() !== 'torch';
+  }
+  document.querySelectorAll('input[name="gpuEngine"]').forEach(r =>
+    r.addEventListener('change', gpuSyncPrecisionUI));
+
   const gpuTargetKey = (host, port) => (port && port !== 22) ? host + ':' + port : host;
 
   function gpuCollectTargets() {
@@ -1239,7 +1251,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const r = await fetch('/api/gpu/start', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine() })
+          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine(), precision: gpuGetPrecision() })
         });
         const d = await r.json();
         if (d.ok && d.jobId) {
@@ -1998,7 +2010,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const r = await fetch('/api/npu/start', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine() })
+          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine(), precision: gpuGetPrecision() })
         });
         const d = await r.json();
         if (d.ok && d.jobId) {

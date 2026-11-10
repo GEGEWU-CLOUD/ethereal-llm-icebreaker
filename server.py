@@ -573,12 +573,16 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             except Exception:
                 burn = 1800
             burn = min(max(burn, 60), 24 * 3600)
+            precision = str(payload.get('precision') or 'fp16')
+            if precision not in ('fp16', 'fp32'):
+                precision = 'fp16'
             job_id, msg = get_gpu_manager().start_job({
                 "host": host, "port": int(payload.get('port') or 22),
                 "username": username, "password": password, "keyPath": key_path,
                 "burnSeconds": burn,
                 "useSudo": bool(payload.get('useSudo')),
                 "engine": str(payload.get('engine') or 'gpu-burn'),
+                "precision": precision,
             })
             return self._send_json({"ok": bool(job_id), "jobId": job_id, "message": msg},
                                    200 if job_id else 409)

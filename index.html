@@ -506,6 +506,10 @@
                 <label><input type="radio" name="gpuEngine" value="gpu-burn" checked> gpu-burn (需 CUDA toolkit)</label>
                 <label><input type="radio" name="gpuEngine" value="torch"> torch 满载 (免 CUDA, 需 PyTorch)</label>
               </div>
+              <div class="clean-radio-group" id="gpuPrecisionWrap" style="margin-top:8px" hidden>
+                <label><input type="radio" name="gpuPrecision" value="fp16" checked> FP16 (吞吐最高 · 默认)</label>
+                <label><input type="radio" name="gpuPrecision" value="fp32"> FP32 (与 gpu-burn 同口径)</label>
+              </div>
             </div>
             <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
               <button class="btn btn-primary" id="btnGpuStart">启动全部压测</button>

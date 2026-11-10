@@ -501,6 +501,7 @@ class GpuJob:
         self.tarball_path = tarball_path
         self.torch_script_path = torch_script_path
         self.engine = cfg.get("engine", "gpu-burn")  # gpu-burn / torch
+        self.precision = cfg.get("precision", "fp16")  # torch 引擎计算精度: fp16 / fp32
         self.cfg = dict(cfg)          # host/port/username/password/keyPath/burnSeconds
         self.use_sudo = bool(cfg.get("useSudo"))        # 显式 sudo 提权开关 (界面控制)
         self._lock = threading.RLock()
@@ -673,8 +674,9 @@ class GpuJob:
                 self._set(remoteDir=remote_dir,
                           lastNote=("引擎: torch | " + ("sftp" if via_sftp else "exec+base64")))
                 sudo = self._sudo_prefix()
-                launch = ("cd {d} && {sudo}bash -c 'nohup env BURN_SECONDS={sec} FORCE=1 bash {d}/gpu_check.sh > {d}/hwcheck.out 2>&1 &'"
-                          ).format(d=shlex.quote(remote_dir), sudo=sudo, sec=int(cfg.get("burnSeconds", 1800)))
+                prec = self.precision if self.precision in ("fp16", "fp32") else "fp16"
+                launch = ("cd {d} && {sudo}bash -c 'nohup env BURN_SECONDS={sec} FORCE=1 PRECISION={prec} bash {d}/gpu_check.sh > {d}/hwcheck.out 2>&1 &'"
+                          ).format(d=shlex.quote(remote_dir), sudo=sudo, sec=int(cfg.get("burnSeconds", 1800)), prec=prec)
             else:
                 # gpu-burn 引擎 (默认)
                 via_sftp = self._upload_file(self.script_path, remote_dir + "/gpu_check.sh", mode=0o755)

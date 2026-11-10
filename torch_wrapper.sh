@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # torch_wrapper.sh — 包装 06-stress-test.sh, 输出平台标准产物格式
-# 用法: bash torch_wrapper.sh [压测秒数]
+# 用法: bash torch_wrapper.sh [压测秒数] [fp16|fp32]
+# 环境变量: BURN_SECONDS / PRECISION (fp16 默认吞吐最高; fp32 与 gpu-burn 同口径)
 # 产物: hwcheck_*/REPORT_*.txt + gpu_telemetry.csv + gpu_burn.log
 set -uo pipefail
 
 BURN_SECONDS="${1:-${BURN_SECONDS:-1800}}"
+PRECISION="${2:-${PRECISION:-fp16}}"
+case "$PRECISION" in fp16|fp32) ;; *) PRECISION="fp16" ;; esac
 SAMPLE_INTERVAL=5
 
 TS="$(date +%Y%m%d_%H%M%S)"
@@ -85,12 +88,16 @@ trap cleanup EXIT INT TERM
 ) & SAMPLER=$!
 
 # ===== torch 满载压测 =====
-sect "4. torch 满载压测 (${BURN_SECONDS}s)"
+sect "4. torch 满载压测 (${BURN_SECONDS}s · ${PRECISION})"
+log "  计算精度  : ${PRECISION} (FP16 吞吐最高; FP32 与 gpu-burn 同口径)"
 log "  压测启动: $(date -Is)"
 
 cat > "${WORKDIR}/torch_burn.py" << 'PYEOF'
 import sys, time, threading, torch
 dur = float(sys.argv[1]); frac = float(sys.argv[2]) if len(sys.argv) > 2 else 0.55
+prec = (sys.argv[3] if len(sys.argv) > 3 else 'fp16').lower()
+DT = torch.float32 if prec == 'fp32' else torch.float16
+BPE = 4 if prec == 'fp32' else 2          # 每元素字节数, 决定矩阵尺寸上限
 torch.backends.cuda.matmul.allow_tf32 = True
 res = {}
 
@@ -100,9 +107,9 @@ def burn(i, out):
         free, total = torch.cuda.mem_get_info(i)
         if free < 2 * 2 ** 30:
             raise RuntimeError(f"可用显存 {free/2**30:.0f}GiB, 不足以压测")
-        n = max(4096, min(int((free * frac / 6) ** 0.5), 24576))
-        a = torch.randn(n, n, device=dev, dtype=torch.float16)
-        b = torch.randn(n, n, device=dev, dtype=torch.float16)
+        n = max(4096, min(int((free * frac / (3 * BPE)) ** 0.5), 24576))
+        a = torch.randn(n, n, device=dev, dtype=DT)
+        b = torch.randn(n, n, device=dev, dtype=DT)
         ref = (a @ b).sum().item()
         it = bad = 0; t0 = time.time(); flops = 2 * n ** 3
         while time.time() - t0 < dur:
@@ -119,13 +126,13 @@ ths = [threading.Thread(target=burn, args=(i, res)) for i in range(torch.cuda.de
 for i in sorted(res):
     r = res[i]
     if r.get('ok'):
-        print(f"GPU {i}: OK  n={r['n']} iter={r['it']} {r['tflops']:.0f} TFLOPS")
+        print(f"GPU {i}: OK  n={r['n']} iter={r['it']} {r['tflops']:.0f} TFLOPS ({prec.upper()})")
     else:
         print(f"GPU {i}: FAULTY  {r.get('err') or 'mismatch=' + str(r.get('bad'))}")
 import sys; sys.exit(0 if all(r.get('ok') for r in res.values()) else 1)
 PYEOF
 
-"$PY" "${WORKDIR}/torch_burn.py" "$BURN_SECONDS" > "$BURN_LOG" 2>&1
+"$PY" "${WORKDIR}/torch_burn.py" "$BURN_SECONDS" "0.55" "$PRECISION" > "$BURN_LOG" 2>&1
 BURN_RC=$?
 
 kill "$SAMPLER" 2>/dev/null; SAMPLER=""
