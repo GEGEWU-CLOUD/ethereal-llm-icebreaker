@@ -22,6 +22,7 @@ LLM API 压力测试系统 - 本地多线程高速流式反向代理、静态托
 
 import http.server
 import socketserver
+import re
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -155,6 +156,12 @@ def destroy_session(token):
 GPU_MANAGER = None
 NPU_MANAGER = None
 
+def keys_dir():
+    """SSH 密钥上传存储目录"""
+    d = os.path.join(data_root(), 'keys')
+    os.makedirs(d, exist_ok=True)
+    return d
+
 def get_npu_manager():
     """NpuJobPool 单例 (npu_agent 懒加载)"""
     global NPU_MANAGER
@@ -281,6 +288,15 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 self._send_json({"ok": False, "error": "未登录"}, 401)
             return
+        # SSH 密钥管理
+        if path == '/api/keys/list':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            import glob as _g
+            kd = keys_dir()
+            keys = [os.path.basename(f) for f in sorted(_g.glob(os.path.join(kd, '*'))) if os.path.isfile(f)]
+            return self._send_json({"ok": True, "keys": keys, "dir": kd})
+
         # NPU 压测: 状态/结果/安装包状态 (登录态保护)
         if path == '/api/npu/status':
             if not self.is_authenticated():
@@ -383,6 +399,69 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             user["passwordChanged"] = datetime.now().isoformat(timespec="seconds")
             save_users(data)
             return self._send_json({"ok": True, "message": "密码已修改, 下次登录使用新密码"})
+
+        # SSH 密钥上传/删除
+        if path == '/api/keys/upload':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            import base64 as _b64mod
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                raw = self.rfile.read(length)
+                # 支持 multipart/form-data (浏览器 file input)
+                content_type = self.headers.get('Content-Type', '')
+                filename = 'id_rsa'
+                content = b''
+                if 'multipart/form-data' in content_type:
+                    # 简单解析 multipart
+                    boundary = content_type.split('boundary=')[1].encode() if 'boundary=' in content_type else b'----'
+                    parts = raw.split(b'--' + boundary)
+                    for part in parts:
+                        if b'filename="' in part:
+                            fn_match = part.split(b'filename="')[1].split(b'"')[0].decode('utf-8', 'replace')
+                            if fn_match: filename = fn_match
+                            # 内容在空行之后
+                            body_start = part.find(b'\r\n\r\n')
+                            if body_start > 0:
+                                content = part[body_start+4:]
+                                # 去掉尾部的 \r\n--boundary
+                                if content.endswith(b'\r\n'):
+                                    content = content[:-2]
+                            break
+                else:
+                    # JSON base64
+                    payload = json.loads(raw.decode('utf-8'))
+                    filename = str(payload.get('filename') or 'id_rsa')
+                    content = _b64mod.b64decode(payload.get('content') or '')
+                if not content:
+                    return self._send_json({"ok": False, "error": "上传内容为空"}, 400)
+                # 安全文件名
+                safe_name = re.sub(r'[^\w.\-]', '_', filename)[:80] or 'id_rsa'
+                kd = keys_dir()
+                fpath = os.path.join(kd, safe_name)
+                with open(fpath, 'wb') as f:
+                    f.write(content)
+                os.chmod(fpath, 0o600)  # paramiko 要求密钥权限 600
+                return self._send_json({"ok": True, "path": fpath, "name": safe_name,
+                                        "size": len(content)})
+            except Exception as e:
+                return self._send_json({"ok": False, "error": str(e)[:200]}, 500)
+
+        if path == '/api/keys/delete':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            try:
+                payload = self._read_json_body()
+            except Exception:
+                return self._send_json({"ok": False, "error": "请求体格式错误"}, 400)
+            name = str(payload.get('name') or '').strip()
+            if not name or '/' in name or '\\' in name:
+                return self._send_json({"ok": False, "error": "无效文件名"}, 400)
+            fpath = os.path.join(keys_dir(), name)
+            if os.path.exists(fpath):
+                os.remove(fpath)
+                return self._send_json({"ok": True})
+            return self._send_json({"ok": False, "error": "文件不存在"}, 404)
 
         # NPU 压测: 启动 / 停止 / 清空 / 解析 / ToolBox 安装
         if path == '/api/npu/start':

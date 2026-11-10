@@ -414,7 +414,10 @@
               <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
                 <button type="button" class="btn btn-outline btn-xs" id="btnNpuPasteFill">识别并填入 (第4段=密码)</button>
                 <button type="button" class="btn btn-outline btn-xs" id="btnNpuPasteFillKey">识别并填入 (第4段=密钥路径)</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btnNpuUploadKey" title="上传密钥文件到服务端, 识别填入时自动使用">上传密钥文件</button>
+                <input type="file" id="npuKeyFile" class="hidden" accept=".pem,.key,.rsa,.id_rsa,*">
               </div>
+              <div id="npuUploadedKeyHint" class="hidden" style="font-size:11px;color:var(--accent);margin-top:4px;"></div>
             </div>
             <div id="npuTargetList"></div>
             <button type="button" class="btn btn-outline btn-xs" id="btnNpuAddTarget" style="margin-top:8px;">+ 添加服务器</button>
@@ -480,7 +483,10 @@
               <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
                 <button type="button" class="btn btn-outline btn-xs" id="btnGpuPasteFill">识别并填入 (第4段=密码)</button>
                 <button type="button" class="btn btn-outline btn-xs" id="btnGpuPasteFillKey">识别并填入 (第4段=密钥路径)</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btnGpuUploadKey" title="上传密钥文件到服务端, 识别填入时自动使用">上传密钥文件</button>
+                <input type="file" id="gpuKeyFile" class="hidden" accept=".pem,.key,.rsa,.id_rsa,*">
               </div>
+              <div id="gpuUploadedKeyHint" class="hidden" style="font-size:11px;color:var(--accent);margin-top:4px;"></div>
             </div>
             <div id="gpuTargetList"></div>
             <button type="button" class="btn btn-outline btn-xs" id="btnGpuAddTarget" style="margin-top:8px;">+ 添加服务器</button>

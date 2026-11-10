@@ -20,3 +20,4 @@ __pycache__/
 # 备注文件 (文档保留, 画稿不入库)
 pelican-*.svg
 packages/
+keys/

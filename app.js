@@ -1055,6 +1055,7 @@ document.addEventListener('DOMContentLoaded', () => {
     userBox.addEventListener('input', syncSudoUi);
     keyBox.addEventListener('input', syncSudoUi);
     syncSudoUi();
+    attachRowKeyUpload(row);
     row.querySelector('.gtr-del').addEventListener('click', () => {
       if (document.querySelectorAll('.gpu-target-row').length > 1) row.remove();
       else uiToast('至少保留一台服务器', 'warn', 4200);    });
@@ -1101,6 +1102,96 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $id('btnGpuAddTarget').addEventListener('click', () => gpuAddTargetRow());
   gpuAddTargetRow();   // 初始一行
+
+  // ---------- SSH 密钥文件上传 (全局 + 单行, GPU/NPU 共用) ----------
+
+  // 全局上传的密钥路径 (window.uploadedKeyPath)
+
+  /** 上传密钥文件到服务端, 返回 { path } 或 null */
+  async function uploadKeyFile(file) {
+    if (!file) return null;
+    const buf = await file.arrayBuffer();
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    try {
+      const r = await fetch('/api/keys/upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, content: b64 })
+      });
+      const d = await r.json();
+      if (d.ok) return d;
+      uiToast('密钥上传失败: ' + (d.error || '未知'), 'error', 6000);
+      return null;
+    } catch (e) {
+      uiToast('密钥上传请求失败: ' + e.message, 'error', 6000);
+      return null;
+    }
+  }
+
+  /** 在目标行密钥路径旁加单行上传按钮 */
+  function attachRowKeyUpload(row) {
+    const keyInput = row.querySelector('.gtr-key');
+    if (!keyInput) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-icon gtr-keyup';
+    btn.title = '上传该机器的密钥文件';
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>';
+    btn.style.cssText = 'flex:none;margin-left:4px;';
+    keyInput.parentNode.appendChild(btn);
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.className = 'hidden';
+    fileInput.accept = '.pem,.key,.rsa,.id_rsa,*';
+    keyInput.parentNode.appendChild(fileInput);
+    btn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      const f = fileInput.files[0];
+      fileInput.value = '';
+      if (!f) return;
+      uiToast('上传密钥 ' + f.name + '…', 'info', 2000);
+      const result = await uploadKeyFile(f);
+      if (result) {
+        keyInput.value = result.path;
+        uiToast('密钥已上传并填入: ' + result.name, 'ok', 3000);
+      }
+    });
+  }
+
+  /** 全局密钥上传 (GPU) */
+  $id('btnGpuUploadKey').addEventListener('click', () => $id('gpuKeyFile').click());
+  $id('gpuKeyFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    uiToast('上传密钥 ' + f.name + '…', 'info', 2000);
+    const result = await uploadKeyFile(f);
+    if (result) {
+      window.uploadedKeyPath = result.path;
+      const hint = $id('gpuUploadedKeyHint');
+      hint.textContent = '已上传: ' + result.name + ' (路径: ' + result.path + ') — 识别填入时自动使用';
+      hint.classList.remove('hidden');
+      uiToast('密钥已上传: ' + result.name + ', 点「识别并填入 (密钥)」时各机器自动使用', 'ok', 5000);
+      appendLog('ok', '[密钥] 已上传 ' + result.name + ' → ' + result.path);
+    }
+  });
+
+  /** 全局密钥上传 (NPU) */
+  $id('btnNpuUploadKey').addEventListener('click', () => $id('npuKeyFile').click());
+  $id('npuKeyFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    uiToast('上传密钥 ' + f.name + '…', 'info', 2000);
+    const result = await uploadKeyFile(f);
+    if (result) {
+      window.uploadedKeyPath = result.path;
+      const hint = $id('npuUploadedKeyHint');
+      hint.textContent = '已上传: ' + result.name + ' (路径: ' + result.path + ') — 识别填入时自动使用';
+      hint.classList.remove('hidden');
+      uiToast('密钥已上传: ' + result.name + ', 点「识别并填入 (密钥)」时各机器自动使用', 'ok', 5000);
+      appendLog('ok', '[NPU 密钥] 已上传 ' + result.name + ' → ' + result.path);
+    }
+  });
 
   /** 当前在途机器标识集合 (host 或 host:port) */
   function gpuActiveKeys() {
@@ -1431,6 +1522,7 @@ document.addEventListener('DOMContentLoaded', () => {
       let password = '', keyPath = '';
       if (mode === 'key') {
         keyPath = parts.slice(3).join(' ');              // 第 4 段起 = 密钥路径
+        if (!keyPath && window.uploadedKeyPath) keyPath = window.uploadedKeyPath;  // 未指定路径时用全局上传的密钥
       } else {
         password = parts.slice(3, 5).join(' ');          // 容忍含空格密码
         keyPath = parts.length > 5 ? parts[5] : '';
@@ -1509,7 +1601,7 @@ document.addEventListener('DOMContentLoaded', () => {
         port: parseInt(get('port'), 10) || 22,
         username: get('username') || 'root',
         password: get('password'),
-        keyPath: get('keyPath'),
+        keyPath: get('keyPath') || (window.uploadedKeyPath || ''),
         useSudo: ['是', 'true', '1', 'y', 'yes', '开启', 'on'].includes(sudoRaw)
       });
     }
@@ -1734,6 +1826,7 @@ document.addEventListener('DOMContentLoaded', () => {
     userBox.addEventListener('input', syncSudo);
     keyBox.addEventListener('input', syncSudo);
     syncSudo();
+    attachRowKeyUpload(row);
     // 单机启动
     row.querySelector('.gtr-start').addEventListener('click', async (e) => {
       const btn = e.currentTarget;
@@ -1822,7 +1915,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const port = parseInt(parts[1], 10) || 22;
       const username = parts[2] || 'root';
       let password = '', keyPath = '';
-      if (mode === 'key') { keyPath = parts.slice(3).join(' '); }
+      if (mode === 'key') {
+        keyPath = parts.slice(3).join(' ');
+        if (!keyPath && window.uploadedKeyPath) keyPath = window.uploadedKeyPath;
+      }
       else { password = parts.slice(3, 5).join(' '); keyPath = parts.length > 5 ? parts[5] : ''; }
       list.push({ host, port, username, password, keyPath, useSudo: username !== 'root' });
     }
