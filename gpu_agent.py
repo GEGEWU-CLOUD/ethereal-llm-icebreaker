@@ -668,7 +668,16 @@ class GpuJob:
             time.sleep(3)
             rc2, out2, _ = self._exec("pgrep -fc 'gpu_check[.]sh' || true")
             if rc2 == 0 and out2.strip() in ("", "0"):
-                # 读取 hwcheck.out 获取具体报错 (最后 10 行)
+                # 进程已退出: 先检查是否生成了 REPORT (脚本可能已跑完, 只是很快)
+                _, ls_report, _ = self._exec(
+                    "ls -t {d}/hwcheck_*/REPORT_*.txt 2>/dev/null | head -1".format(d=remote_dir))
+                report_path = ls_report.strip().splitlines()[0] if ls_report.strip() else None
+                if report_path:
+                    # 脚本已跑完, 走正常收集流程
+                    self._set(phase="collecting", remoteDir=remote_dir)
+                    threading.Thread(target=self._collect, args=(report_path,), daemon=True).start()
+                    return
+                # 没有 REPORT: 真正的启动失败, 显示日志
                 _, hw_out, _ = self._exec(
                     "tail -10 {d}/hwcheck.out 2>/dev/null".format(d=remote_dir))
                 detail = (hw_out.strip() or err.strip() or out.strip() or "未知原因")[:500]
