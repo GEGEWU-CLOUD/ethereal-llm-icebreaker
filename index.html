@@ -500,6 +500,13 @@
                 <option value="3600">60 分钟 · 深度复验</option>
               </select>
             </div>
+            <div class="form-item" style="margin-top:10px;">
+              <label>压测引擎</label>
+              <div class="clean-radio-group">
+                <label><input type="radio" name="gpuEngine" value="gpu-burn" checked> gpu-burn (需 CUDA toolkit)</label>
+                <label><input type="radio" name="gpuEngine" value="torch"> torch 满载 (免 CUDA, 需 PyTorch)</label>
+              </div>
+            </div>
             <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
               <button class="btn btn-primary" id="btnGpuStart">启动全部压测</button>
               <button class="btn btn-danger hidden" id="btnGpuStopAll">停止全部</button>

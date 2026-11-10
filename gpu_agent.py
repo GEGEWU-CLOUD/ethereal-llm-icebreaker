@@ -474,10 +474,12 @@ def _try_import_paramiko():
 class GpuJob:
     """单台服务器的 GPU 压测任务 (独立 SSH 会话 + 状态机)"""
 
-    def __init__(self, job_id, script_path, tarball_path, cfg):
+    def __init__(self, job_id, script_path, tarball_path, cfg, torch_script_path=None):
         self.id = job_id
         self.script_path = script_path
         self.tarball_path = tarball_path
+        self.torch_script_path = torch_script_path
+        self.engine = cfg.get("engine", "gpu-burn")  # gpu-burn / torch
         self.cfg = dict(cfg)          # host/port/username/password/keyPath/burnSeconds
         self.use_sudo = bool(cfg.get("useSudo"))        # 显式 sudo 提权开关 (界面控制)
         self._lock = threading.RLock()
@@ -643,16 +645,25 @@ class GpuJob:
             remote_dir = "/tmp/gpubench_{}_{}".format(
                 datetime.datetime.now().strftime("%Y%m%d_%H%M%S"), self.id[-6:])
             self._exec("mkdir -p {}".format(shlex.quote(remote_dir)))
-            # 上传: sftp 优先, sshd 禁用 sftp 子系统 (open_sftp 即 Channel closed) 时自动降级 exec+base64
-            via_sftp = self._upload_file(self.script_path, remote_dir + "/gpu_check.sh", mode=0o755)
-            if self.tarball_path:
-                self._upload_file(self.tarball_path, remote_dir + "/gpu-burn.tar.gz")
-            self._set(remoteDir=remote_dir,
-                      lastNote=("传输方式: sftp" if via_sftp else "传输方式: exec+base64 (该机 sshd 未启用 sftp)"))
 
-            sudo = self._sudo_prefix()
-            launch = ("cd {d} && {sudo}bash -c 'nohup bash {d}/gpu_check.sh {sec} > {d}/hwcheck.out 2>&1 &'"
-                      ).format(d=shlex.quote(remote_dir), sudo=sudo, sec=int(cfg.get("burnSeconds", 1800)))
+            if self.engine == "torch" and self.torch_script_path and os.path.exists(self.torch_script_path):
+                # torch 引擎: 上传 06-stress-test.sh, 环境变量传参
+                via_sftp = self._upload_file(self.torch_script_path, remote_dir + "/gpu_check.sh", mode=0o755)
+                self._set(remoteDir=remote_dir,
+                          lastNote=("引擎: torch | " + ("sftp" if via_sftp else "exec+base64")))
+                sudo = self._sudo_prefix()
+                launch = ("cd {d} && {sudo}bash -c 'nohup env BURN_SECONDS={sec} FORCE=1 bash {d}/gpu_check.sh > {d}/hwcheck.out 2>&1 &'"
+                          ).format(d=shlex.quote(remote_dir), sudo=sudo, sec=int(cfg.get("burnSeconds", 1800)))
+            else:
+                # gpu-burn 引擎 (默认)
+                via_sftp = self._upload_file(self.script_path, remote_dir + "/gpu_check.sh", mode=0o755)
+                if self.tarball_path:
+                    self._upload_file(self.tarball_path, remote_dir + "/gpu-burn.tar.gz")
+                self._set(remoteDir=remote_dir,
+                          lastNote=("传输方式: sftp" if via_sftp else "传输方式: exec+base64 (该机 sshd 未启用 sftp)"))
+                sudo = self._sudo_prefix()
+                launch = ("cd {d} && {sudo}bash -c 'nohup bash {d}/gpu_check.sh {sec} > {d}/hwcheck.out 2>&1 &'"
+                          ).format(d=shlex.quote(remote_dir), sudo=sudo, sec=int(cfg.get("burnSeconds", 1800)))
             rc, out, err = self._exec(launch, timeout=20)
             time.sleep(2)
             rc2, out2, _ = self._exec("pgrep -fc 'gpu_check[.]sh' || true")
@@ -815,6 +826,7 @@ class GpuJobPool:
     def __init__(self, script_path):
         self.script_path = script_path
         base = os.path.dirname(script_path)
+        self.torch_script_path = os.path.join(base, "06-stress-test.sh")
         candidates = [
             os.path.join(base, "gpu-burn.tar.gz"),
             os.path.join(base, "vendor", "gpu-burn.tar.gz"),
@@ -840,7 +852,8 @@ class GpuJobPool:
                     return None, "并发任务已达上限 ({})，请等待现有任务结束".format(self.MAX_ACTIVE)
             job_id = "j{}{}".format(datetime.datetime.now().strftime("%H%M%S"),
                                     secrets.token_hex(3))
-            job = GpuJob(job_id, self.script_path, self.tarball_path, cfg)
+            job = GpuJob(job_id, self.script_path, self.tarball_path, cfg,
+                         torch_script_path=self.torch_script_path)
             self._jobs[job_id] = job
             # 清理过旧的已完成任务
             done_ids = [k for k, v in self._jobs.items() if v.state.get("phase") in ("done", "error", "stopped")]

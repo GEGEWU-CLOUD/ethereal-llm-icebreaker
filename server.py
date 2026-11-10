@@ -489,6 +489,7 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 "username": username, "password": password, "keyPath": key_path,
                 "burnSeconds": burn,
                 "useSudo": bool(payload.get('useSudo')),
+                "engine": str(payload.get('engine') or 'gpu-burn'),
             })
             return self._send_json({"ok": bool(job_id), "jobId": job_id, "message": msg},
                                    200 if job_id else 409)
@@ -577,6 +578,7 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 "username": username, "password": password, "keyPath": key_path,
                 "burnSeconds": burn,
                 "useSudo": bool(payload.get('useSudo')),
+                "engine": str(payload.get('engine') or 'gpu-burn'),
             })
             return self._send_json({"ok": bool(job_id), "jobId": job_id, "message": msg},
                                    200 if job_id else 409)

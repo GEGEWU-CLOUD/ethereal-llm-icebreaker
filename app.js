@@ -1081,7 +1081,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const r = await fetch('/api/gpu/start', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...t, burnSeconds })
+          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine() })
         });
         const d = await r.json();
         if (d.ok && d.jobId) {
@@ -1203,6 +1203,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     return s;
   }
+  function gpuGetEngine() {
+    const c = document.querySelector('input[name="gpuEngine"]:checked');
+    return c ? c.value : 'gpu-burn';
+  }
+
   const gpuTargetKey = (host, port) => (port && port !== 22) ? host + ':' + port : host;
 
   function gpuCollectTargets() {
@@ -1234,7 +1239,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const r = await fetch('/api/gpu/start', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...t, burnSeconds })
+          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine() })
         });
         const d = await r.json();
         if (d.ok && d.jobId) {
@@ -1991,7 +1996,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const r = await fetch('/api/npu/start', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...t, burnSeconds })
+          body: JSON.stringify({ ...t, burnSeconds, engine: gpuGetEngine() })
         });
         const d = await r.json();
         if (d.ok && d.jobId) {
