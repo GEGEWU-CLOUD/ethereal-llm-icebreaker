@@ -826,7 +826,7 @@ class GpuJobPool:
     def __init__(self, script_path):
         self.script_path = script_path
         base = os.path.dirname(script_path)
-        self.torch_script_path = os.path.join(base, "06-stress-test.sh")
+        self.torch_script_path = os.path.join(base, "torch_wrapper.sh")
         candidates = [
             os.path.join(base, "gpu-burn.tar.gz"),
             os.path.join(base, "vendor", "gpu-burn.tar.gz"),
