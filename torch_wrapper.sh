@@ -70,7 +70,29 @@ for cand in "${PYTHON:-}" /home/liantong/miniconda3/bin/python /opt/conda/bin/py
   [ -n "$cand" ] && [ -x "$cand" ] || continue
   "$cand" -c 'import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)' >/dev/null 2>&1 && { PY=$cand; break; }
 done
-[ -z "$PY" ] && { fail "找不到带 CUDA torch 的 Python"; log "  检查过: miniconda, /opt/conda, 系统 python3"; exit 2; }
+if [ -z "$PY" ]; then
+  # 探测 torch 装在哪个用户名下, 报错时直接说明
+  FOUND=""
+  for h in /home/* /root; do
+    [ -d "$h" ] || continue
+    for sd in "$h"/.local/lib/python3.*/site-packages; do
+      if [ -d "$sd/torch" ] && [ ${#FOUND} -lt 120 ]; then
+        FOUND="${FOUND:+$FOUND; }用户 ${h##*/} 的 $sd"
+      fi
+    done
+    for py in "$h"/miniconda3/bin/python "$h"/anaconda3/bin/python; do
+      if [ -x "$py" ] && "$py" -c 'import torch' >/dev/null 2>&1 && [ ${#FOUND} -lt 120 ]; then
+        FOUND="${FOUND:+$FOUND; }用户 ${h##*/} 的 $py"
+      fi
+    done
+  done
+  if [ -n "$FOUND" ]; then
+    fail "找不到当前运行用户 $(id -un) 可用的 CUDA torch — torch 在: $FOUND;请用该用户直连并关闭 sudo 提权,或把 torch 装到系统目录"
+  else
+    fail "找不到带 CUDA torch 的 Python (已检查: \$PYTHON, miniconda, /opt/conda, 系统 python3)"
+  fi
+  exit 2
+fi
 ok "找到 PyTorch: $PY ($($PY -c 'import torch;print(torch.__version__)' 2>/dev/null))"
 
 # ===== 遥测采样器 =====
