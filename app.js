@@ -1141,7 +1141,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.className = 'hidden';
-    fileInput.accept = '.pem,.key,.rsa,.id_rsa,*';
+    fileInput.accept = '*/*';
     keyInput.parentNode.appendChild(fileInput);
     btn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', async () => {
