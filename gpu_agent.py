@@ -156,7 +156,7 @@ def parse_burn_log(log_text):
         em = re.search(r"(\d+)\s*errors?", rest, re.I)
         result.setdefault(idx, {})
         result[idx].update({"verdict": m.group(3).upper(), "errors": int(em.group(1)) if em else 0,
-                            "bus": m.group(2).strip() or None})
+                            "bus": (m.group(2) or "").strip() or None})
     # 兜底: REPORT 里的 "GPU 0: OK" 行
     return result, gflops
 
