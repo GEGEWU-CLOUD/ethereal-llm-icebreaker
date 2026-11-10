@@ -157,6 +157,10 @@ def parse_burn_log(log_text):
         result.setdefault(idx, {})
         result[idx].update({"verdict": m.group(3).upper(), "errors": int(em.group(1)) if em else 0,
                             "bus": (m.group(2) or "").strip() or None})
+        # torch 引擎: "GPU 0: OK  n=24576 iter=17 143 TFLOPS" — 算力在判定行尾
+        tf = re.search(r"([\d.]+)\s*TFLOPS", rest, re.I)
+        if tf and _try_float(tf.group(1)) is not None:
+            gflops.setdefault(idx, {"vals": [], "bus": None})["vals"].append(_try_float(tf.group(1)) * 1000.0)
     # 兜底: 旧版 gpu-burn 汇总行只有 "GPU 0: OK", 算力值仅出现在过程行 "(5670 Gflop/s)" 里
     if not any(d.get("vals") for d in gflops.values()):
         prog = [_try_float(m.group(1)) for m in
