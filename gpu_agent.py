@@ -668,11 +668,11 @@ class GpuJob:
             time.sleep(3)
             rc2, out2, _ = self._exec("pgrep -fc 'gpu_check[.]sh' || true")
             if rc2 == 0 and out2.strip() in ("", "0"):
-                # 读取 hwcheck.out 获取具体报错
+                # 读取 hwcheck.out 获取具体报错 (最后 10 行)
                 _, hw_out, _ = self._exec(
-                    "cat {d}/hwcheck.out 2>/dev/null | tail -5".format(d=remote_dir))
-                detail = (hw_out.strip() or err.strip() or out.strip() or "未知原因")[:300]
-                self._set(phase="error", error="远端压测启动失败 — 脚本输出:\n" + detail)
+                    "tail -10 {d}/hwcheck.out 2>/dev/null".format(d=remote_dir))
+                detail = (hw_out.strip() or err.strip() or out.strip() or "未知原因")[:500]
+                self._set(phase="error", error="远端压测启动失败 — 日志最后10行:\n" + detail)
                 self._close()
                 return
             self._set(phase="running", stage="preparing")
