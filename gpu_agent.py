@@ -150,7 +150,7 @@ def parse_burn_log(log_text):
             d["vals"].append(val)
             if bus and not d["bus"]:
                 d["bus"] = bus
-    for m in re.finditer(r"GPU\s*(\d+)\s*\(([^)]*)\)\s*[:：]\s*(OK|FAULTY)\s*(.*)", text, re.I):
+    for m in re.finditer(r"GPU\s*(\d+)\s*(?:\(([^)]*)\))?\s*[:：]\s*(OK|FAULTY)\s*(.*)", text, re.I):
         idx = m.group(1)
         rest = m.group(4) or ""
         em = re.search(r"(\d+)\s*errors?", rest, re.I)
