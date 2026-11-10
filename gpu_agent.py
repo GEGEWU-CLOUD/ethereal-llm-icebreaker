@@ -896,7 +896,7 @@ class GpuJobPool:
                          torch_script_path=self.torch_script_path)
             self._jobs[job_id] = job
             # 清理过旧的已完成任务
-            done_ids = [k for k, v in self._jobs.items() if v.state.get("phase") in ("done", "error", "stopped")]
+            done_ids = [k for k, v in self._jobs.items() if v.state.get("phase") in ("done", "done_fail", "error", "stopped")]
             for k in (done_ids[:-self.KEEP_DONE] if len(done_ids) > self.KEEP_DONE else []):
                 self._jobs.pop(k, None)
         job.start()
@@ -908,10 +908,10 @@ class GpuJobPool:
         return [j.status() for j in jobs]
 
     def clear_finished(self):
-        """清空已结束任务 (done/error/stopped) 的记录与结果; 在途任务不受影响"""
+        """清空已结束任务 (done/done_fail/error/stopped) 的记录与结果; 在途任务不受影响"""
         with self._lock:
             finished = [k for k, v in self._jobs.items()
-                        if v.state.get("phase") in ("done", "error", "stopped")]
+                        if v.state.get("phase") in ("done", "done_fail", "error", "stopped")]
             for k in finished:
                 self._jobs.pop(k, None)
         return True, "已清空 {} 条历史记录".format(len(finished))

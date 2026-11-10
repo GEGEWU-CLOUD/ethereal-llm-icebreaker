@@ -678,7 +678,7 @@ class NpuJobPool:
 
     def clear_finished(self):
         with self._lock:
-            finished = [k for k, v in self._jobs.items() if v.state.get("phase") in ("done", "error", "stopped")]
+            finished = [k for k, v in self._jobs.items() if v.state.get("phase") in ("done", "done_fail", "error", "stopped")]
             for k in finished:
                 self._jobs.pop(k, None)
             self._installs = {k: v for k, v in self._installs.items() if v.state.get("phase") not in ("done", "error")}
