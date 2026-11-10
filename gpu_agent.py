@@ -801,7 +801,11 @@ class GpuJob:
                     "remoteDir": hw_dir,
                 })
             parsed["jobId"] = self.id
-            self._set(phase="done", result=parsed, progress=100, endedAt=time.time())
+            # FAIL 结果: phase 设为 done_fail, 前端显示"执行错误"+具体报错
+            fail_items = [a["text"] for a in (parsed.get("adjudications") or []) if a.get("cls") == "fail"]
+            phase = "done_fail" if fail_items else "done"
+            self._set(phase=phase, result=parsed, progress=100, endedAt=time.time(),
+                      failSummary="; ".join(fail_items)[:300] if fail_items else None)
         except Exception as e:
             self._set(phase="error", error="产物收集/解析失败: {}".format(e)[:300])
         finally:

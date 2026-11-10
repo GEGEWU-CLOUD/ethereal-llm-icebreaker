@@ -991,7 +991,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const $id = (id) => document.getElementById(id);
   const gpuPhaseMap = {
     connecting: 'SSH 连接中', uploading: '上传压测脚本', running: 'GPU 压测运行中',
-    collecting: '收集产物并解析', done: '已完成', error: '出错', stopped: '已停止', idle: '空闲'
+    collecting: '收集产物并解析', done: '已完成', done_fail: '⚠ 执行错误', error: '出错', stopped: '已停止', idle: '空闲'
   };
   const gpuStageMap = {
     preparing: '硬件巡检中 (GPU 烧卡尚未开始)',
@@ -1294,7 +1294,8 @@ document.addEventListener('DOMContentLoaded', () => {
     wrap.innerHTML = entries.map(([jid, j]) => {
       const st = j.status || {};
       const active = ['connecting', 'uploading', 'running', 'collecting'].includes(st.phase);
-      const phaseColor = st.phase === 'error' ? 'var(--danger)' :
+      const isFail = st.phase === 'done_fail';
+      const phaseColor = (st.phase === 'error' || isFail) ? 'var(--danger)' :
         (st.phase === 'done' ? 'var(--accent)' : 'var(--gray-600)');
       const liveRows = (st.live || []).map(g => {
         const hot = (g.temp || 0) >= 85;
@@ -1310,6 +1311,7 @@ document.addEventListener('DOMContentLoaded', () => {
           ${active ? `<span class="gjb-elapsed">${Math.floor((st.elapsed || 0) / 60)}m${(st.elapsed || 0) % 60}s / ${Math.round((st.burnSeconds || 0) / 60)}m</span>
           <button type="button" class="btn btn-danger btn-xs" data-stopjob="${jid}">停止</button>` : ''}
           ${st.phase === 'error' ? `<div class="gjb-err">${(st.error || '').slice(0, 160)}</div>` : ''}
+          ${isFail ? `<div class="gjb-err">✗ ${(st.failSummary || '压测失败, 详见结果卡').replace(/</g, '&lt;').slice(0, 200)}</div>` : ''}
         </div>
         ${active ? `
         <div class="gjb-bar"><div style="width:${st.progress || 0}%;background:var(--accent);"></div></div>` : ''}
