@@ -31,7 +31,7 @@ class NpuReportBuilder {
     const sx = t => L + (t / xMax) * (W - L - R);
     const sy = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
 
-    let s = `<div class='chart'><div class='chart-title'>${this.esc(title)}${unit ? ' (' + this.esc(unit) + ')' : ''}</div><svg viewBox='0 0 ${W} ${H}' preserveAspectRatio='xMidYMid meet'>`;
+    let s = `<div class='chart-box'><div class='chart-title'>${this.esc(title)}${unit ? ' (' + this.esc(unit) + ')' : ''}</div><svg viewBox='0 0 ${W} ${H}' preserveAspectRatio='xMidYMid meet'>`;
     for (let i = 0; i <= 5; i++) {
       const v = lo + ((hi - lo) * i) / 5, y = sy(v);
       s += `<line x1='${L}' y1='${y}' x2='${W - R}' y2='${y}' stroke='#e5e7eb' stroke-width='1'/>`;
@@ -68,7 +68,7 @@ class NpuReportBuilder {
     const badgeCls = parsed.verdictCls === 'pass' ? '' : ' badge-warn';
     const sampleCnt = cards.length ? (cards[0].sampleCount || 0) : 0;
 
-    const kpi = (v, l, cls) => `<div class='kpi ${cls || ''}'><div class='v'>${esc(v)}</div><div class='l'>${esc(l)}</div></div>`;
+    const kpi = (v, l, cls) => `<div class="tile"><div class="k">${esc(l)}</div><div class="v" style="color:${cls === 'ok' ? '#0ca30c' : cls === 'hot' ? '#fab219' : cls === 'bad' ? '#d03b3b' : cls === 'info' ? '#2a78d6' : '#0b0b0b'}">${esc(v)}</div></div>`;
 
     const cardRows = cards.map(g => {
       const ok = (parsed.verdictCls !== 'fail');
@@ -97,60 +97,113 @@ class NpuReportBuilder {
     const hostDesc = [m.hostname, (m.hostIps || []).join(','), m.model ? '· ' + m.model : ''].filter(Boolean).join(' ');
 
     return `<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>NPU 服务器压力测试报告 · ${esc(dateStr)}</title><style>
-*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Microsoft YaHei','Segoe UI',sans-serif;background:#f3f5f9;color:#111827;line-height:1.65}
-.wrap{max-width:980px;margin:0 auto;padding:24px 16px 48px}
-header.hero{background:linear-gradient(135deg,#0f172a,#14532d);color:#fff;border-radius:14px;padding:30px 34px;margin-bottom:20px}
-.hero h1{font-size:25px;letter-spacing:.5px}.hero .sub{color:#cbd5e1;margin-top:6px;font-size:13px}
-.hero .meta{display:flex;gap:22px;margin-top:16px;flex-wrap:wrap;font-size:13px;color:#e2e8f0}
-.badge{display:inline-block;margin-top:14px;padding:5px 16px;border-radius:999px;font-weight:700;font-size:15px;background:#16a34a;color:#fff}
-.badge-warn{background:#d97706}.badge-fail{background:#EA580C}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
-.kpi{background:#fff;border-radius:12px;padding:16px 18px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
-.kpi .v{font-size:22px;font-weight:800}.kpi .l{font-size:12px;color:#6b7280;margin-top:2px}
-.kpi.ok .v{color:#16a34a}.kpi.hot .v{color:#d97706}.kpi.info .v{color:#2563eb}
-section.card{background:#fff;border-radius:12px;padding:24px 26px;margin-bottom:20px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
-h2{font-size:18px;border-left:4px solid #16A34A;padding-left:10px;margin-bottom:14px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{background:#eef2f7;text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;white-space:nowrap}
-td{padding:7px 10px;border-bottom:1px solid #e5e7eb}tr:last-child td{border-bottom:none}td.c,th.c{text-align:center}
-.tag{display:inline-block;padding:1px 10px;border-radius:999px;font-size:12px;font-weight:700}
-.tag-pass{background:#dcfce7;color:#15803d}.tag-warn{background:#fef3c7;color:#b45309}
-.chart{margin:18px 0 8px}.chart-title{font-size:13.5px;font-weight:700;color:#374151;margin-bottom:4px}
-svg{width:100%;height:auto;background:#fcfdff;border:1px solid #eef1f6;border-radius:8px}
-.ax{font-size:11px;fill:#6b7280}.warn{font-size:11px;fill:#d97706}
-.legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;font-size:12px;color:#4b5563}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-.warn-item{border:1px solid #fde68a;background:#fffbeb;border-radius:10px;padding:14px 16px;margin-bottom:10px}
-.warn-item h4{font-size:14px;margin-bottom:4px}.warn-item p{font-size:13px;color:#374151}.warn-item .cls{font-weight:700}
-footer{color:#9ca3af;font-size:12px;text-align:center;margin-top:8px}
-@media print{body{background:#fff}section.card,header.hero{box-shadow:none;border:1px solid #e5e7eb'}}
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px 64px;
+    background: #f9f9f7; color: #0b0b0b;
+    font: 14px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 24px; flex-wrap: wrap; margin-bottom: 8px;
+  }
+  h1 { font-size: 24px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .sub { color: #52514e; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .verdict {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-radius: 999px;
+    border: 1px solid rgba(11,11,11,.10); background: #fcfcfb;
+    font-weight: 600; font-size: 14px; white-space: nowrap;
+  }
+  .tiles {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+    gap: 12px; margin: 24px 0 32px;
+  }
+  .tile {
+    background: #fcfcfb; border: 1px solid rgba(11,11,11,.10);
+    border-radius: 12px; padding: 16px 18px;
+  }
+  .tile .k { color: #52514e; font-size: 12px; letter-spacing: .02em; margin-bottom: 8px; }
+  .tile .v { font-size: 26px; font-weight: 640; line-height: 1.15; letter-spacing: -0.02em; }
+  .tile .v small { font-size: 13px; font-weight: 500; color: #52514e; margin-left: 3px; }
+  .tile .n { color: #898781; font-size: 11.5px; margin-top: 6px; }
+  section {
+    background: #fcfcfb; border: 1px solid rgba(11,11,11,.10);
+    border-radius: 14px; padding: 20px 22px 16px; margin-bottom: 20px;
+  }
+  .sec-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  h2 { font-size: 15px; font-weight: 640; margin: 0; letter-spacing: .01em; }
+  .sec-note { color: #898781; font-size: 12px; }
+  .chart-box { margin: 14px 0 4px; }
+  .chart-title { font-size: 13.5px; font-weight: 600; color: #52514e; margin-bottom: 6px; }
+  svg { width: 100%; height: auto; background: #fcfcfb; border: 1px solid #e1e0d9; border-radius: 10px; display: block; }
+  .axis-txt { fill: #898781; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 11.5px; color: #52514e; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: baseline; }
+  .tbl-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid #e1e0d9; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: #52514e; font-weight: 560; font-size: 11.5px; border-bottom: 1px solid #c3c2b7; background: transparent; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.ok { color: #0ca30c; font-weight: 600; }
+  td.bad { color: #d03b3b; font-weight: 600; }
+  .hi { color: #d03b3b; font-weight: 600; }
+  .warn-item {
+    border: 1px solid #e1e0d9; background: #fcfcfb;
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+  }
+  .warn-item h4 { font-size: 13px; margin: 0 0 4px; color: #0b0b0b; font-weight: 600; }
+  .warn-item p { font-size: 12.5px; color: #52514e; margin: 0; }
+  .warn-item .cls { font-weight: 700; }
+  .tag { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .tag-pass { background: #dcfce7; color: #15803d; }
+  .tag-warn { background: #fef3c7; color: #b45309; }
+  .chk { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 6px; }
+  .chk .item { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid #e1e0d9; border-radius: 10px; }
+  .chk .ico { flex: none; width: 18px; height: 18px; border-radius: 50%; background: #0ca30c; color: #fff; font-size: 12px; line-height: 18px; text-align: center; font-weight: 700; margin-top: 1px; }
+  .chk .t { font-weight: 580; font-size: 13px; }
+  .chk .d { color: #898781; font-size: 11.5px; margin-top: 2px; }
+  footer { color: #898781; font-size: 11.5px; line-height: 1.9; margin-top: 28px; padding-top: 16px; border-top: 1px solid #e1e0d9; }
+  @media (max-width: 640px) { body { padding: 20px 14px 48px; } h1 { font-size: 20px; } }
+  @media print { body { background: #fff; } section { border: 1px solid #e1e0d9; } }
 </style></head><body><div class='wrap'>
-<header class='hero'>
-<h1>NPU 服务器压力测试报告${burn.dmiMissing ? ' (仅基线检查)' : (m.durationSec ? ' (' + Math.round(m.durationSec / 60) + ' 分钟满载)' : '')}</h1>
+<header>
+    <div>
+      <h1>NPU 服务器压力测试报告${burn.dmiMissing ? ' (仅基线检查)' : (m.durationSec ? ' (' + Math.round(m.durationSec / 60) + ' 分钟满载)' : '')}</h1>
 <div class='sub'>主机: ${esc(hostDesc)}</div>
 <div class='meta'>
 <span>NPU: ${esc(m.npuCount || cards.length || '-')} × ${esc(m.model || '昇腾')}</span>
 <span>依据: npu_check.sh (健康基线${burn.dmiMissing ? '' : ' + ascend-dmi 满载'} + 遥测采样)</span>
 ${m.burnStart ? `<span>压测窗口(北京时间): ${esc(m.burnStart)} – ${esc((m.burnEnd || '').split(' ').pop() || '')}(${m.durationSec}s, 采样 ${sampleCnt} 次/卡)</span>` : ''}
 </div>
-<div class='badge${parsed.verdictCls === 'fail' ? ' badge-fail' : badgeCls}'>${esc(parsed.verdict)}</div>
-</header>
+</div>
+    <div class="verdict" style="gap:8px">
+      <span style="width:9px;height:9px;border-radius:50%;background:${parsed.verdictCls === 'pass' ? '#0ca30c' : parsed.verdictCls === 'warn' ? '#fab219' : '#d03b3b'};display:inline-block"></span>
+      ${esc(parsed.verdict)}
+    </div>
+  </header>
 
-<div class='kpis'>
+<div class='tiles'>
 ${kpi(cards.length ? (burn.passCount + ' PASS') : '-', '健康检查通过项', 'ok')}
 ${kpi(sm.tmaxAll != null ? Math.round(sm.tmaxAll) + '°C' : '-', '最高温度' + (sm.tmaxCard != null ? '(NPU' + sm.tmaxCard + ')' : ''), (sm.tmaxAll || 0) >= 80 ? 'hot' : 'info')}
 ${kpi(sm.pmaxAll != null ? Math.round(sm.pmaxAll) + ' W' : '-', '峰值功耗', 'info')}
 ${kpi(burn.dmiMissing ? '未安装' : '已安装', 'MindX ToolBox', burn.dmiMissing ? 'hot' : 'ok')}
 </div>
 
-<section class='card'><h2>一、逐卡遥测统计</h2>
+<section><h2>一、逐卡遥测统计</h2>
 <table><tr><th class='c'>NPU</th><th class='c'>温度峰值</th><th class='c'>功耗峰值</th><th class='c'>HBM 峰值</th><th class='c'>采样数</th><th class='c'>判定</th></tr>${cardRows}</table>
 ${!burn.dmiMissing ? chartTemp + chartPwr : '<p style="font-size:12.5px;color:#6b7280;margin-top:10px">未安装 MindX ToolBox, 无满载遥测曲线。</p>'}
 </section>
 
-<section class='card'><h2>二、脚本 WARN/FAIL 甄别 (自动规则)</h2>${adjCards}</section>
+<section><h2>二、脚本 WARN/FAIL 甄别 (自动规则)</h2>${adjCards}</section>
 
-<section class='card'><h2>三、结论与建议</h2>
+<section><h2>三、结论与建议</h2>
 <p style='font-size:14px'><b>综合结论: ${esc(parsed.verdict)}。</b>脚本原始结论: ${esc(burn.scriptVerdict || '-')}(PASS=${burn.passCount || 0} / WARN=${burn.warnCount || 0} / FAIL=${burn.failCount || 0})。</p>
 <table><tr><th class='c'>#</th><th>建议</th><th class='c'>优先级</th></tr>${recRows}</table>
 </section>

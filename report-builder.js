@@ -34,12 +34,8 @@ class ReportBuilder {
     const out = a.maxOutput || {};
     const dateStr = new Date().toLocaleString('zh-CN');
 
-    const kpi = (label, value, sub) => `
-      <div class="kpi">
-        <div class="kpi-label">${esc(label)}</div>
-        <div class="kpi-value">${esc(value)}</div>
-        <div class="kpi-sub">${esc(sub || '')}</div>
-      </div>`;
+    const kpi = (label, value, sub, cls) =>
+      `<div class="tile"><div class="k">${esc(label)}</div><div class="v">${esc(value)}</div><div class="n">${esc(sub || '')}</div></div>`;
 
     const chart = (title, dataUrl, alt) => dataUrl
       ? `<div class="section"><h2>${esc(title)}</h2><img class="chart-img" src="${dataUrl}" alt="${esc(alt || title)}"></div>`
@@ -82,69 +78,118 @@ class ReportBuilder {
 <meta charset="UTF-8">
 <title>LLM API 性能压测报告 - ${esc(modelName)}</title>
 <style>
-  :root {
-    --black: #0A0A0A; --panel: #161616; --line: #2A2A2A;
-    --white: #FFFFFF; --gray: #8A8A8A; --dim: #5A5A5A;
-    --red: #16A34A; --green: #35C46E; --amber: #F5A623; --blue: #3B9EFF;
-  }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 28px 32px 40px;
-    background: var(--black); color: #DDDDDD;
-    font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
-    font-size: 13px; line-height: 1.65;
+    margin: 0; padding: 32px 24px 64px;
+    background: #f9f9f7; color: #0b0b0b;
+    font: 14px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  .rpt-head { border-bottom: 2px solid var(--red); padding-bottom: 16px; margin-bottom: 20px; }
-  .rpt-head h1 { margin: 0 0 8px; font-size: 21px; color: var(--white); letter-spacing: 0.5px; }
-  .rpt-head .meta { color: var(--gray); font-size: 12px; }
-  .rpt-head .meta b { color: #DDDDDD; font-weight: 600; }
-  .kpi-grid {
-    display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 20px;
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 24px; flex-wrap: wrap; margin-bottom: 8px;
   }
-  .kpi {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    padding: 12px 14px;
+  h1 { font-size: 24px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .sub { color: #52514e; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .sub b { color: #0b0b0b; font-weight: 600; }
+  .verdict {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-radius: 999px;
+    border: 1px solid rgba(11,11,11,.10); background: #fcfcfb;
+    font-weight: 600; font-size: 14px; white-space: nowrap;
   }
-  .kpi-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
-  .kpi-value { font-size: 19px; font-weight: 700; color: var(--white); margin: 3px 0 2px; }
-  .kpi-sub { font-size: 11px; color: var(--gray); }
-  .section { margin-bottom: 20px; page-break-inside: avoid; }
-  .section h2 {
-    font-size: 14px; color: var(--white);
-    border-left: 3px solid var(--red); padding-left: 10px; margin: 0 0 10px;
+  .tiles {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+    gap: 12px; margin: 24px 0 32px;
   }
-  .chart-img {
-    width: 100%; max-width: 900px; border: 1px solid var(--line);
-    border-radius: 10px; background: var(--panel); display: block;
+  .tile {
+    background: #fcfcfb; border: 1px solid rgba(11,11,11,.10);
+    border-radius: 12px; padding: 16px 18px;
   }
-  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
-  th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid var(--line); font-size: 12px; }
-  th { background: #1E1E1E; color: var(--gray); font-weight: 600; white-space: nowrap; }
-  td.ok { color: var(--green); font-weight: 600; }
-  td.warn { color: var(--amber); }
-  td.bad { color: #EA580C; font-weight: 600; }
+  .tile .k { color: #52514e; font-size: 12px; letter-spacing: .02em; margin-bottom: 8px; }
+  .tile .v { font-size: 26px; font-weight: 640; line-height: 1.15; letter-spacing: -0.02em; }
+  .tile .v small { font-size: 13px; font-weight: 500; color: #52514e; margin-left: 3px; }
+  .tile .n { color: #898781; font-size: 11.5px; margin-top: 6px; }
+  section {
+    background: #fcfcfb; border: 1px solid rgba(11,11,11,.10);
+    border-radius: 14px; padding: 20px 22px 16px; margin-bottom: 20px;
+  }
+  .sec-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  h2 { font-size: 15px; font-weight: 640; margin: 0; letter-spacing: .01em; }
+  .sec-note { color: #898781; font-size: 12px; }
+  .chart-box { margin: 14px 0 4px; }
+  .chart-box img {
+    width: 100%; max-width: 900px;
+    border: 1px solid #e1e0d9; border-radius: 10px;
+    background: #fcfcfb; display: block;
+  }
+  .chart-title { font-size: 13.5px; font-weight: 600; color: #52514e; margin-bottom: 6px; }
+  .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid #e1e0d9; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    color: #52514e; font-weight: 560; font-size: 11.5px;
+    letter-spacing: .02em; border-bottom: 1px solid #c3c2b7;
+    background: transparent;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.ok { color: #0ca30c; font-weight: 600; }
+  td.warn { color: #fab219; }
+  td.bad { color: #d03b3b; font-weight: 600; }
+  .hi { color: #d03b3b; font-weight: 600; }
   .diag {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    padding: 14px 16px; margin-bottom: 12px;
+    background: #fcfcfb; border: 1px solid #e1e0d9;
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
   }
-  .diag h3 { margin: 0 0 6px; font-size: 13px; color: var(--white); }
-  .diag p { margin: 0; color: #C9C9C9; font-size: 12.5px; }
-  .rpt-foot { margin-top: 24px; color: var(--dim); font-size: 11px; text-align: center; border-top: 1px solid var(--line); padding-top: 14px; }
-  @media print { body { background: #fff; color: #222; } }
+  .diag h3 { margin: 0 0 6px; font-size: 13px; color: #0b0b0b; font-weight: 600; }
+  .diag p { margin: 0; color: #52514e; font-size: 13px; line-height: 1.7; }
+  .chk { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 6px; }
+  .chk .item {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 12px 14px; border: 1px solid #e1e0d9; border-radius: 10px;
+  }
+  .chk .ico {
+    flex: none; width: 18px; height: 18px; border-radius: 50%;
+    background: #0ca30c; color: #fff; font-size: 12px;
+    line-height: 18px; text-align: center; font-weight: 700; margin-top: 1px;
+  }
+  .chk .t { font-weight: 580; font-size: 13px; }
+  .chk .d { color: #898781; font-size: 11.5px; margin-top: 2px; }
+  footer {
+    color: #898781; font-size: 11.5px; line-height: 1.9;
+    margin-top: 28px; padding-top: 16px; border-top: 1px solid #e1e0d9;
+  }
+  @media (max-width: 640px) {
+    body { padding: 20px 14px 48px; }
+    h1 { font-size: 20px; }
+    .tile .v { font-size: 22px; }
+  }
+  @media print { body { background: #fff; } section { border: 1px solid #e1e0d9; } }
 </style>
 </head>
 <body>
-  <div class="rpt-head">
-    <h1>📊 大语言模型 API 全方位性能压力与极限基准评测报告</h1>
-    <div class="meta">
-      测试对象: <b>${esc(modelName)}</b> &nbsp;|&nbsp; 报告生成: ${esc(dateStr)}
-      ${meta.startedAt ? '&nbsp;|&nbsp; 压测开始: ' + esc(meta.startedAt) : ''}
-      ${meta.totalRequests ? '&nbsp;|&nbsp; 总请求量: <b>' + esc(meta.totalRequests.toLocaleString()) + '</b>' : ''}
-      ${meta.wallClockSec ? '&nbsp;|&nbsp; 总耗时: ' + esc(meta.wallClockSec) + 's' : ''}
+  <div class="wrap">
+  <header>
+    <div>
+      <h1>LLM API 性能压测报告</h1>
+      <div class="sub">
+        ${esc(modelName)} · ${esc(dateStr)}
+        ${meta.totalRequests ? ' · ' + esc(meta.totalRequests.toLocaleString()) + ' 请求' : ''}
+        ${meta.wallClockSec ? ' · ' + esc(meta.wallClockSec) + 's' : ''}
+      </div>
     </div>
-  </div>
+    <div class="verdict">
+      <span style="width:9px;height:9px;border-radius:50%;background:${(pr.first429 || '无') !== '无 429' ? '#d03b3b' : '#0ca30c'};display:inline-block"></span>
+      ${(pr.first429 || '无') !== '无 429' ? '有限流' : '压测通过'}
+    </div>
+  </header>
 
-  <div class="kpi-grid">
+  <div class="tiles">
     ${kpi('峰值吞吐 RPM', tp.peakRpm ? Math.round(tp.peakRpm).toLocaleString() : '-', tp.peakRps ? tp.peakRps + ' req/s' : '')}
     ${kpi('峰值吞吐 TPM', tp.peakTpm ? Math.round(tp.peakTpm).toLocaleString() : '-', tp.peakTps ? tp.peakTps + ' tok/s' : '')}
     ${kpi('最佳并发', sw.bestConcurrency != null ? sw.bestConcurrency : '-', '评分 ' + (sw.score || '-'))}
@@ -158,8 +203,8 @@ class ReportBuilder {
   ${charts.context ? chart('长上下文 Prefill 耗时曲线', charts.context) : ''}
   ${charts.status ? chart('状态码分布', charts.status) : ''}
 
-  <div class="section">
-    <h2>各并发档位性能实测阶梯表</h2>
+  <section>
+  <div class="sec-head"><h2>并发阶梯实测</h2><span class="sec-note">吞吐与延迟分布</span></div>
     <table>
       <thead><tr>
         <th>并发</th><th>采样数</th><th>成功率</th><th>RPS</th><th>TPM</th><th>生成TPS</th>
@@ -170,8 +215,8 @@ class ReportBuilder {
   </div>
 
   ${contextResults.length ? `
-  <div class="section">
-    <h2>长上下文阶梯极限测试表</h2>
+  <section>
+  <div class="sec-head"><h2>长上下文极限探测</h2><span class="sec-note">针尖探针验证</span></div>
     <table>
       <thead><tr>
         <th>梯度</th><th>注入 Tokens</th><th>状态码</th><th>TTFT</th><th>总耗时</th><th>针尖探针</th><th>判定</th>
@@ -180,8 +225,8 @@ class ReportBuilder {
     </table>
   </div>` : ''}
 
-  <div class="section">
-    <h2>深度诊断结论</h2>
+  <section>
+  <div class="sec-head"><h2>诊断结论</h2><span class="sec-note">Sweet Spot · 瓶颈定位</span></div>
     <div class="diag">
       <h3>💡 最佳并发推荐点 (Sweet Spot)</h3>
       <p>${reasonText}</p>
@@ -190,9 +235,9 @@ class ReportBuilder {
       <h3>🚨 压力点与瓶颈定位 (Bottlenecks)</h3>
       <p>${pressureText}</p>
     </div>
-  </div>
+  </section>
 
-  <div class="rpt-foot">由 IceBreaker 生成 · 数据仅代表测试时刻状态</div>
+  <footer>由 IceBreaker 生成 · 数据仅代表测试时刻状态</div>
 </body>
 </html>`;
   }
