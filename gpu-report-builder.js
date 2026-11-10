@@ -283,6 +283,11 @@ class GpuReportBuilder {
       'else{lo=Math.floor((mn*0.95)/100)*100;hi=Math.ceil((mx*1.04)/100)*100;}' +
       'if(hi<=lo)hi=lo+1;return{lo:lo,hi:hi};}' +
       'function niceStep(x){var c=Math.pow(10,Math.floor(Math.log(x)/Math.LN10));var r=x/c;return (r<=1?1:r<=2?2:r<=5?5:10)*c;}' +
+      // 单调三次样条 (Fritsch-Carlson): 平滑曲线且不过冲 — 直线段折线改为圆润曲线
+      'function smoothPath(pts){var n=pts.length;if(n<2)return "";if(n===2)return "M"+pts[0].x.toFixed(1)+" "+pts[0].y.toFixed(1)+"L"+pts[1].x.toFixed(1)+" "+pts[1].y.toFixed(1);' +
+      'var dx=[],m=[],t=[],i;for(i=0;i<n-1;i++){dx.push(pts[i+1].x-pts[i].x);m.push((pts[i+1].y-pts[i].y)/(pts[i+1].x-pts[i].x));}' +
+      't.push(m[0]);for(i=0;i<m.length-1;i++){if(m[i]*m[i+1]<=0)t.push(0);else{var s=dx[i]+dx[i+1];t.push(3*s/((s+dx[i])/m[i]+(s+dx[i+1])/m[i+1]));}}t.push(m[m.length-1]);' +
+      'var d="M"+pts[0].x.toFixed(1)+" "+pts[0].y.toFixed(1);for(i=0;i<n-1;i++){var h=(pts[i+1].x-pts[i].x)/3;d+="C"+(pts[i].x+h).toFixed(1)+" "+(pts[i].y+t[i]*h).toFixed(1)+" "+(pts[i+1].x-h).toFixed(1)+" "+(pts[i+1].y-t[i+1]*h).toFixed(1)+" "+pts[i+1].x.toFixed(1)+" "+pts[i+1].y.toFixed(1);}return d;}' +
       'function makeChart(o){' +
       'var W=960,H=300,M={t:14,r:20,b:34,l:56},iw=W-M.l-M.r,ih=H-M.t-M.b,sc=scaleFor(o.key),lo=sc.lo,hi=sc.hi;' +
       'var xf=function(s){return M.l+(s/TOTAL)*iw;},sy=function(v){return M.t+ih-((v-lo)/(hi-lo))*ih;};' +
@@ -301,7 +306,7 @@ class GpuReportBuilder {
       'var wt=document.createElementNS("http://www.w3.org/2000/svg","text");wt.setAttribute("x",W-M.r-4);wt.setAttribute("y",wy-4);wt.setAttribute("text-anchor","end");wt.setAttribute("class","axis-txt");wt.textContent="85°C 告警";svg.appendChild(wt);}' +
       'var cross=document.createElementNS("http://www.w3.org/2000/svg","line");cross.setAttribute("class","crosshair");cross.setAttribute("y1",M.t);cross.setAttribute("y2",M.t+ih);svg.appendChild(cross);' +
       'var paths={},dots={};' +
-      'GPUS.forEach(function(g,gi){var d="";SER[g].forEach(function(p,i){if(p[o.key]==null)return;d+=(d?"L":"M")+xf(p.t).toFixed(1)+" "+sy(p[o.key]).toFixed(1)+" ";});' +
+      'GPUS.forEach(function(g,gi){var pts=[];SER[g].forEach(function(p){if(p[o.key]==null)return;pts.push({x:xf(p.t),y:sy(p[o.key])});});var d=smoothPath(pts);' +
       'var pe=document.createElementNS("http://www.w3.org/2000/svg","path");pe.setAttribute("d",d.trim());pe.setAttribute("class","series-line");pe.setAttribute("stroke",seriesColor(gi));svg.appendChild(pe);paths[g]=pe;' +
       'var c=document.createElementNS("http://www.w3.org/2000/svg","circle");c.setAttribute("r",4);c.setAttribute("class","hover-dot");c.setAttribute("fill",seriesColor(gi));svg.appendChild(c);dots[g]=c;});' +
       'var hit=document.createElementNS("http://www.w3.org/2000/svg","rect");hit.setAttribute("x",M.l);hit.setAttribute("y",M.t);hit.setAttribute("width",iw);hit.setAttribute("height",ih);hit.setAttribute("fill","transparent");svg.appendChild(hit);' +
