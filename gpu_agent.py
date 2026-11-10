@@ -157,7 +157,24 @@ def parse_burn_log(log_text):
         result.setdefault(idx, {})
         result[idx].update({"verdict": m.group(3).upper(), "errors": int(em.group(1)) if em else 0,
                             "bus": (m.group(2) or "").strip() or None})
-    # 兜底: REPORT 里的 "GPU 0: OK" 行
+    # 兜底: 旧版 gpu-burn 汇总行只有 "GPU 0: OK", 算力值仅出现在过程行 "(5670 Gflop/s)" 里
+    if not any(d.get("vals") for d in gflops.values()):
+        prog = [_try_float(m.group(1)) for m in
+                re.finditer(r"\(\s*([\d.]+)\s*Gflop/s?\s*\)", text, re.I)]
+        prog = [v for v in prog if v is not None]
+        cm = re.search(r"Tested\s+(\d+)\s+GPUs?", text, re.I)
+        count = int(cm.group(1)) if cm else (len(result) or 1)
+        if prog and count >= 1:
+            if count == 1:
+                idx = next(iter(result), "0")
+                gflops.setdefault(idx, {"vals": [], "bus": None})["vals"] = prog
+            else:
+                # 旧版多卡输出: 每轮刷新按 GPU 0..n-1 顺序各打一行, 按 count 分块取每卡样本
+                chunks = len(prog) // count
+                for k in range(count):
+                    vals = [prog[c * count + k] for c in range(chunks)]
+                    if vals:
+                        gflops.setdefault(str(k), {"vals": [], "bus": None})["vals"] = vals
     return result, gflops
 
 
