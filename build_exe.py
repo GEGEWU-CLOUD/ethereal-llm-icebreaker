@@ -25,7 +25,7 @@ EXE_NAME = "LLM-Benchmark-Server"
 STATIC_FILES = [
     "index.html", "login.html", "style.css", "favicon.svg",
     "app.js", "analyzer.js", "charts.js", "stress-engine.js", "report-builder.js",
-    "gpu-report-builder.js", "npu-report-builder.js", "gpu_check.sh", "npu_check.sh", "06-stress-test.sh",
+    "gpu-report-builder.js", "npu-report-builder.js", "gpu_check.sh", "npu_check.sh", "torch_wrapper.sh", "06-stress-test.sh",
 ]
 
 VENDOR_FILES = glob.glob(os.path.join(ROOT, "vendor", "*"))

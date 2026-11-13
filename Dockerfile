@@ -23,6 +23,7 @@ COPY server.py \
      npu_agent.py \
      gpu_check.sh \
      npu_check.sh \
+     torch_wrapper.sh \
      index.html \
      login.html \
      style.css \
