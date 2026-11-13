@@ -1,9 +1,10 @@
 # 🧊 IceBreaker — LLM API 与 GPU 服务器全方位性能压力与基准评测系统
 
-一站式压测平台,覆盖两大测试对象:
+一站式压测平台,覆盖三大测试对象:
 
 - **LLM API 压测**: 兼容 OpenAI 规范的各类网关 —— OpenAI、DeepSeek、SiliconFlow、通义 DashScope、智谱 GLM、Kimi、本地 Ollama / vLLM
-- **GPU 服务器压测**: gpu-burn 满载烤机 + 15 秒级遥测采样 + 上架验收报告,支持**多台机器同时并发压测**
+- **GPU 服务器压测**: gpu-burn / torch 双引擎满载烤机 + 15 秒级遥测采样 + 上架验收报告,支持**多台机器同时并发压测**
+- **NPU 服务器压测(昇腾)**: npu-smi 基线健康检查 + ascend-dmi 满载 + 验收报告,工作流与 GPU 完全同构
 
 登录后选择压测对象卡片进入对应工作台,支持白天/夜间双主题,所有弹窗均为项目内样式。
 
@@ -18,14 +19,20 @@
 - **智能诊断**: Sweet Spot 最佳并发推荐、压力拐点定位(429 限流边界 / P90 突变点)、落地建议
 
 ### GPU 服务器压测
+- **双压测引擎**: `gpu-burn`(需 CUDA toolkit,支持所有 NVIDIA 卡)或 `torch 满载`(免 CUDA 编译,只需 PyTorch,可选 **FP16/FP32** 计算精度,FP32 与 gpu-burn 同口径);吞吐(GFLOPS)解析兼容新/旧 gpu-burn 与 torch 三种输出格式
 - **多机并发**: 粘贴/表格批量导入机器,一键同时压测,机器数不设上限(同机在途任务自动防重复)
-- **三种录入方式**: 批量粘贴(密码模式 / 密钥模式两个识别按钮)、CSV/Excel 表格导入(含模板下载)、手动加行
+- **三种录入方式**: 批量粘贴(密码模式 / 密钥模式两个识别按钮)、CSV/Excel 表格导入(含模板下载)、手动加行;密钥可页面上传(全局+单机)
 - **双认证**: 密码或密钥登录(Linux/Windows 密钥路径均可),「sudo 提权」开关支持免密 sudo;密钥登录时密码可仅用于 sudo
 - **单机启动**: 每台机器一个「启动」按钮,可逐台发起;也有「启动全部」
 - **实时遥测**: 每台机器独立任务块 —— 阶段(硬件巡检中 → GPU 满载压测中 → 脚本收尾中)、进度、逐卡温度/功耗/利用率(≥85℃ 标红)、单独停止
 - **稳健传输**: SFTP 被禁用的机器自动降级 exec+base64 传输;SSH 瞬时断连自动重试
-- **报告自动化**: 跑完秒级出报告 —— 逐卡遥测算力表、全卡温度/功耗/SM 时钟 SVG 曲线、WARN 自动甄别(AER 误报/内核噪声/热降频)、结论建议;时间统一北京时间
-- **报告管理**: 单台在线查看(浏览器直达 URL)/导出 HTML·MD·PDF;**一键 ZIP 打包全部报告**(按 内网IP_端口 命名);一键清空历史记录
+- **报告自动化**: 跑完秒级出报告 —— KPI 磁贴、逐卡遥测算力表、全卡温度/功耗/SM 时钟**可交互平滑曲线**(图例点击显隐/悬停十字线数值/可折叠数据表/85℃ 告警线)、明暗双主题、WARN 自动甄别(AER 误报/内核噪声/热降频)、结论建议;时间统一北京时间
+- **报告管理**: 单台在线查看(浏览器直达 URL)/导出 HTML·MD·PDF;**一键 ZIP 打包全部报告**(按 内网IP_端口 命名);一键清空历史记录(含执行错误记录)
+
+### NPU 服务器压测(昇腾)
+- 工作流与 GPU 工作台**完全同构**: 批量粘贴/表格导入/逐台启动/实时遥测/自动报告/ZIP 导出/清空历史
+- 基线健康检查(npu-smi 温度/功耗/算力利用率)→ ascend-dmi 满载 → 压后复检,无 ToolBox 时降级为仅基线并给出安装指引
+- 页面内 **MindX ToolBox 一键安装**(把 CANN/ToolBox `.run` 安装包放进 `packages/` 目录,平台自动上传安装)
 
 ### 平台能力
 - 登录鉴权(PBKDF2 哈希存储、页面内自助改密、24h 滑动会话)
@@ -49,11 +56,11 @@
 
 ### 方式一:拉取镜像部署(推荐)
 
-镜像地址:`registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2`
+镜像地址:`registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:latest`
 
 **1. 拉取镜像**
 ```bash
-docker pull registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:latest
 ```
 
 **2. 启动(二选一)**
@@ -65,7 +72,7 @@ docker run -d \
   -p 8765:8765 \
   -v icebreaker-data:/data \
   --restart unless-stopped \
-  registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+  registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:latest
 ```
 
 | 参数 | 说明 |
@@ -87,7 +94,7 @@ ICE_PORT=9000 docker compose -f docker-compose.image.yml up -d
 docker run -d --name icebreaker -p 8765:8765 -v icebreaker-data:/data \
   -v /root/keys:/keys:ro \
   --restart unless-stopped \
-  registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+  registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:latest
 # 平台里密钥路径填 /keys/id_rsa
 ```
 
@@ -161,9 +168,9 @@ build_exe.bat     # 或 python build_exe.py
 
 ```bash
 docker compose build
-docker tag llm-benchmark:latest registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+docker tag llm-benchmark:latest registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:latest
 docker login registry.cn-hangzhou.aliyuncs.com
-docker push registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
+docker push registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:latest
 ```
 
 ---
@@ -183,12 +190,22 @@ docker push registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
    - 表格导入:下载模板 → 填好 → 导入(CSV/Excel)
    - 手动「+ 添加服务器」
 2. 按需开启每行「sudo 提权」开关(root 自动禁用;免密 sudo 则密码留空)
-3. 选压测时长(1 分钟冒烟 / 5 / 10 / 30 标准 / 60 分钟)→ 逐台「启动」或「启动全部压测」
-4. 右侧任务区实时看遥测;每台跑完自动出结果卡(结论徽章 + KPI + 逐卡表 + 甄别摘要)
-5. 结果区操作:**在线查看**(浏览器打开报告)/ 单台导出 HTML·MD·PDF / **下载全部报告 ZIP(按 内网IP_端口 命名)** / **清空历史记录**
-6. 无法 SSH 的机器:页面下载 `gpu_check.sh` + `gpu-burn.tar.gz` 放服务器 `/tmp` 执行 `sudo ./gpu_check.sh 1800`,跑完上传三件产物手动解析
+3. 选**压测引擎**: `gpu-burn`(机器有 CUDA toolkit)/ `torch 满载`(机器有 PyTorch;选 torch 时可再选 **FP16 吞吐最高 / FP32 与 gpu-burn 同口径**)
+4. 选压测时长(1 分钟冒烟 / 5 / 10 / 30 标准 / 60 分钟)→ 逐台「启动」或「启动全部压测」
+5. 右侧任务区实时看遥测;每台跑完自动出结果卡(结论徽章 + KPI + 逐卡表 + 甄别摘要)
+6. 结果区操作:**在线查看**(浏览器打开报告)/ 单台导出 HTML·MD·PDF / **下载全部报告 ZIP(按 内网IP_端口 命名)** / **清空历史记录**
+7. 无法 SSH 的机器:页面下载 `gpu_check.sh` + `gpu-burn.tar.gz` 放服务器 `/tmp` 执行 `sudo ./gpu_check.sh 1800`,跑完上传三件产物手动解析
+
+> 引擎选择:有 CUDA toolkit → gpu-burn;只有 PyTorch → torch;两者都没有 → 装 PyTorch 最简单(免编译,`pip3 install torch`,装在 SSH 登录所用的用户下)。
 
 > 时长说明:所选时长仅是**烧卡段**;脚本前有硬件巡检(约 1~2 分钟)、后有汇总,进度条会按「硬件巡检中 → GPU 满载压测中 → 脚本收尾中」分阶段显示。
+
+### NPU 服务器压测工作台(昇腾)
+
+操作与 GPU 工作台完全一致(录入机器 → 选时长 → 逐台启动 → 自动报告 → ZIP/清空);两点差异:
+
+- 远端需有 `npu-smi`;满载依赖 `ascend-dmi`(MindX ToolBox),没有时自动降级为仅基线检查并在报告标注
+- **ToolBox 在线安装**:从 hiascend.com 下载 CANN/ToolBox `.run` 放进平台 `packages/` 目录,工作台点「安装 ToolBox」自动上传安装
 
 ---
 
@@ -204,6 +221,9 @@ docker push registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
 | 批量启动偶发某台失败 | 网关/NAT 瞬时限流,平台已自动重试一次;对该台单独再点「启动」即可 |
 | 正在压测的机器再点启动 | 弹项目内警告且点击不生效(前后端双重拦截) |
 | 压测对服务器的影响 | 仅 GPU 满载(硬件保护全程在岗);系统零改动,只在 `/tmp` 留几 MB 产物,错峰生产业务即可 |
+| 引擎怎么选(gpu-burn / torch) | 有 CUDA toolkit → gpu-burn;只有 PyTorch → torch;都没有 → 装 torch 最简单(免编译) |
+| torch 引擎报「找不到带 CUDA torch 的 Python」 | 机器没装 PyTorch,或装在了别的用户名下 —— 报错会**直接指明 torch 在哪个用户与路径**,按提示换用户/关 sudo 或安装即可 |
+| 报告里 ECC 显示「未检测」 | 消费级 GPU(GeForce 系列)硬件无 ECC,属正常;数据中心卡(H20/H100/A100)会显示实际 CE/UE 计数 |
 
 ---
 
@@ -211,16 +231,19 @@ docker push registry.cn-hangzhou.aliyuncs.com/zznn/llm-icebreaker:v2
 
 ```
 IceBreaker/
-├── index.html / login.html     # 主页面(入口卡片/双工作台) / 登录页
+├── index.html / login.html     # 主页面(入口卡片/三大工作台) / 登录页
 ├── style.css / app.js          # 样式(昼夜主题) / 交互控制器
 ├── stress-engine.js            # LLM 压测引擎
 ├── analyzer.js                 # LLM 分析诊断 (Sweet Spot/拐点)
 ├── report-builder.js           # LLM 报告生成器 (HTML/MD/PDF)
 ├── gpu_agent.py                # GPU 多机并发编排 + 产物解析 (paramiko)
-├── gpu-report-builder.js       # GPU 报告生成器 (SVG 曲线/甄别)
+├── gpu-report-builder.js       # GPU 报告生成器 (KPI磁贴/交互曲线/甄别)
 ├── gpu_check.sh                # 远端压测脚本 (硬件巡检+gpu-burn+遥测)
+├── torch_wrapper.sh            # torch 引擎远端脚本 (FP16/FP32, 产物格式与 gpu-burn 对齐)
+├── npu_agent.py / npu_check.sh / npu-report-builder.js   # NPU(昇腾) 同构模块
 ├── server.py                   # 后端: 静态托管/登录鉴权/CORS代理/报告托管 (纯标准库)
 ├── vendor/                     # 本地化依赖: Chart.js / html2pdf / xlsx / fflate / gpu-burn 源码包
+├── packages/                   # (可选) NPU CANN/ToolBox .run 安装包存放处
 ├── Dockerfile / docker-compose.yml / docker-compose.image.yml / run.sh
 ├── start.bat / build_exe.py / DEPLOY.md
 └── headless-bench.mjs          # LLM 命令行无头压测
