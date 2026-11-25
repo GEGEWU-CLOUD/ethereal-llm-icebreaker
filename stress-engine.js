@@ -19,6 +19,9 @@ class StressEngine {
       proxyToken: ''  // 跨源代理会话令牌 (登录后由 /api/me 下发, 跨端口 Cookie 不可达)
     };
 
+    // 服务端自报身份 (vLLM 的 system_fingerprint, 如 vllm-0.30.0-tp8-pp3-ep)
+    this.serverFingerprint = '';
+
     // 活跃请求追踪表
     this.activeWorkers = new Map();
 
@@ -147,6 +150,36 @@ class StressEngine {
   }
 
   /**
+   * 拉取远程可用模型列表 (完整元数据: id / max_model_len / root 路径等)
+   */
+  async fetchModelsFull() {
+    const rawEndpoint = `${this.config.apiUrl}/models`;
+    const endpoint = this.resolveEndpoint(rawEndpoint);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const resp = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.config.apiKey}`
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      return data.data || [];
+    } catch (e) {
+      clearTimeout(timer);
+      const isCors = e.message.includes('Failed to fetch') || e.message.includes('NetworkError');
+      if (isCors) {
+        throw new Error('CORS 跨域被拦截，请开启【CORS 代理中继】或启动 start.bat 本地代理服务');
+      }
+      throw e;
+    }
+  }
+
+  /**
    * 拉取远程可用模型列表
    */
   async fetchModels() {
@@ -215,15 +248,18 @@ class StressEngine {
 
   /**
    * 快速生成指定 Token 规模的探测文本 (64k - 1M)
+   * tokensPerBlock: 服务端实测标定的单块 token 密度 (calibrateBlockTokens 的结果)
+   * 每次生成注入唯一随机盐 → 跨档位/跨轮次文本前缀必然不同, 不命中服务端 prefix cache (真实冷 Prefill)
    */
-  generateContextText(tokensTargetK, needleSecret = 'KEY-89421') {
+  generateContextText(tokensTargetK, needleSecret = 'KEY-89421', tokensPerBlock = 85) {
     const sampleBlock = "【大模型极限承载压力基准测试序列。超长上下文Prefill阶段对注意力机制与显存KV Cache有着严苛要求。Sequence Block ID: ";
-    const blockTokens = 85;
     const targetTokens = tokensTargetK * 1024;
-    const repeats = Math.max(1, Math.floor(targetTokens / blockTokens));
+    // 预留 5% 安全余量: 标定在超大档位有 ~+2% 漂移 (块序号位数增长/换行), 1M 档也不越界 max_model_len (prompt + 输出)
+    const repeats = Math.max(1, Math.round(targetTokens * 0.95 / tokensPerBlock));
 
+    const runSalt = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const parts = [];
-    parts.push(`--- BENCHMARK CONTEXT START (${tokensTargetK}K TOKENS SIMULATION) ---\n`);
+    parts.push(`--- BENCHMARK CONTEXT START (${tokensTargetK}K TOKENS TARGET · RUN ${runSalt}) ---\n`);
 
     // 在 75% 深度位置注入探针
     const needleInsertIndex = Math.floor(repeats * 0.75);
@@ -240,13 +276,44 @@ class StressEngine {
     parts.push(`【重要指令】：请立即检索上文中[CRITICAL_ANCHOR_PROBE]记录的隐秘校验密钥。严禁任何客套话、解释或前缀，必须直接以 ${needleSecret.split('-')[0]} 开头输出完整的密钥值：`);
 
     const fullText = parts.join('');
-    const estimatedTokens = Math.round(fullText.length / 2.2);
+    const estimatedTokens = Math.round(repeats * tokensPerBlock);
     return {
       text: fullText,
       targetTokens,
       estimatedTokens,
+      tokensPerBlock,
       needleSecret
     };
+  }
+
+  /**
+   * 服务端实测标定: 单个样本块的真实 token 密度 (tokens/块)
+   * 用一小段已知块数的文本向服务端换取 usage.prompt_tokens, 保证各档位注入量
+   * 真实逼近标称值, 而不是按字符数粗估 (不同 tokenizer 密度差异可达 3 倍)
+   */
+  async calibrateBlockTokens() {
+    const sampleBlock = "【大模型极限承载压力基准测试序列。超长上下文Prefill阶段对注意力机制与显存KV Cache有着严苛要求。Sequence Block ID: ";
+    const N = 40;
+    let text = `--- BENCHMARK DENSITY CALIBRATION RUN ${Date.now().toString(36)} ---\n`;
+    for (let i = 0; i < N; i++) text += sampleBlock + i + "】 ";
+    try {
+      const rec = await this.executeSingleRequest({
+        messages: [{ role: 'user', content: text }],
+        maxTokens: 1,
+        tag: 'density-calibration',
+        customTimeout: 60,
+        workerId: 'calib_density'
+      });
+      if (rec.ok && rec.usageFromServer && rec.promptTokens > N * 2) {
+        const per = rec.promptTokens / N;
+        if (per >= 5 && per <= 400) {
+          this.log('system', `📏 上下文密度标定完成: 服务端实测 ${per.toFixed(1)} tokens/块 (prompt_tokens=${rec.promptTokens})`);
+          return per;
+        }
+      }
+    } catch (e) {}
+    this.log('warn', '⚠ 上下文密度标定失败 (无服务端 usage), 回退默认估算 85 tokens/块');
+    return 85;
   }
 
   /**
@@ -263,6 +330,7 @@ class StressEngine {
     let errorMessage = '';
     let finishReason = '';
     let firstTokenTime = 0;
+    let sawServerUsage = false; // 本次请求是否拿到了服务端权威 usage 计量
 
     const timeoutSec = customTimeout || this.config.timeoutSec;
     const controller = new AbortController();
@@ -332,7 +400,8 @@ class StressEngine {
           completionTokens: 0,
           totalTokens: 0,
           tps: 0,
-          finishReason: 'error'
+          finishReason: 'error',
+          usageFromServer: false
         };
       }
 
@@ -381,6 +450,9 @@ class StressEngine {
 
             try {
               const parsed = JSON.parse(dataStr);
+              if (parsed.system_fingerprint) {
+                this.serverFingerprint = parsed.system_fingerprint;
+              }
               const delta = parsed.choices?.[0]?.delta?.content || '';
               if (delta) {
                 fullContent += delta;
@@ -390,6 +462,7 @@ class StressEngine {
                 finishReason = parsed.choices[0].finish_reason;
               }
               if (parsed.usage) {
+                sawServerUsage = true;
                 promptTokens = parsed.usage.prompt_tokens || promptTokens;
                 completionTokens = parsed.usage.completion_tokens || completionTokens;
               }
@@ -425,7 +498,11 @@ class StressEngine {
         ttft = (now - startTime) / 1000;
         fullContent = json.choices?.[0]?.message?.content || '';
         finishReason = json.choices?.[0]?.finish_reason || 'stop';
+        if (json.system_fingerprint) {
+          this.serverFingerprint = json.system_fingerprint;
+        }
         if (json.usage) {
+          sawServerUsage = true;
           promptTokens = json.usage.prompt_tokens || 0;
           completionTokens = json.usage.completion_tokens || 0;
         }
@@ -462,7 +539,8 @@ class StressEngine {
         totalTokens: promptTokens + completionTokens,
         tps,
         finishReason,
-        content: fullContent
+        content: fullContent,
+        usageFromServer: sawServerUsage
       };
     } catch (err) {
       clearTimeout(timer);
@@ -492,7 +570,8 @@ class StressEngine {
         completionTokens: 0,
         totalTokens: 0,
         tps: 0,
-        finishReason: 'error'
+        finishReason: 'error',
+        usageFromServer: false
       };
     }
   }
@@ -743,12 +822,15 @@ class StressEngine {
   /**
    * 极限长上下文阶梯探测 (64k, 128k, 256k, 512k, 1M) - 支持单阶即时通知与实时进度
    */
-  async probeContextLimits({ tiers = [64, 128, 256, 512, 1024], globalProgressOffset = 0, globalProgressSpan = 100 }) {
+  async probeContextLimits({ tiers = [64, 128, 256, 512, 1024], maxTokens = 150, globalProgressOffset = 0, globalProgressSpan = 100 }) {
     this.isRunning = true;
     this.shouldStop = false;
     const results = [];
 
     this.log('system', `=== 启动长上下文承载力探测: [${tiers.map(t => (t >= 1024 ? '1M' : t + 'k')).join(', ')}] ===`);
+
+    // 先用服务端 usage 实测标定 token 密度, 让各档位注入量真实逼近标称规模
+    const tokensPerBlock = await this.calibrateBlockTokens();
 
     for (let i = 0; i < tiers.length; i++) {
       if (this.shouldStop) break;
@@ -771,19 +853,33 @@ class StressEngine {
       this.log('info', `[${i + 1}/${tiers.length}] 正在生成 ${tierLabel} Tokens 探针文本并注入...`);
 
       const secret = `KEY-${Math.floor(Math.random() * 89999 + 10000)}`;
-      const payload = this.generateContextText(tierK, secret);
+      const payload = this.generateContextText(tierK, secret, tokensPerBlock);
       const messages = [{ role: 'user', content: payload.text }];
 
       const tierTimeout = Math.max(90, Math.min(360, tierK * 0.45));
       this.log('info', `正在提交请求 (~${payload.estimatedTokens.toLocaleString()} tokens, 超时设置 ${tierTimeout}s)...`);
 
-      const record = await this.executeSingleRequest({
+      let record = await this.executeSingleRequest({
         messages,
-        maxTokens: 150,
+        maxTokens,
         tag: `context-${tierK}k`,
         customTimeout: tierTimeout,
         workerId: `ctx_${tierK}k`
       });
+
+      // 网络层瞬时失败 (超大 body 上传最易抖动) 自动重试 1 次; HTTP 业务响应 (400/429 等) 是真实结果, 不重试
+      if (!record.ok && (record.status === 0 || record.status === -1) && !this.shouldStop) {
+        this.log('warn', `⚠ [${tierLabel}] 网络层瞬时失败 (${record.error.slice(0, 80)})，3s 后自动重试 1 次...`);
+        await new Promise(r => setTimeout(r, 3000));
+        record = await this.executeSingleRequest({
+          messages,
+          maxTokens,
+          tag: `context-${tierK}k-retry`,
+          customTimeout: tierTimeout,
+          workerId: `ctx_${tierK}k_r`
+        });
+        if (record.ok) record.retried = true;
+      }
 
       // 提取内容并标准化比对 (兼容首尾空白、标点与大小写)
       const cleanContent = (record.content || '').replace(/\s+/g, '');

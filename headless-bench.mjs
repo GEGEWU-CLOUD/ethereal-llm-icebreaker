@@ -38,6 +38,7 @@ const CFG = {
 globalThis.window = globalThis;
 (0, eval)(readFileSync(path.join(__dirname, 'stress-engine.js'), 'utf-8'));
 (0, eval)(readFileSync(path.join(__dirname, 'analyzer.js'), 'utf-8'));
+(0, eval)(readFileSync(path.join(__dirname, 'report-builder.js'), 'utf-8'));
 
 const engine = window.stressEngine;
 const analyzer = window.benchmarkAnalyzer;
@@ -140,35 +141,16 @@ process.on('SIGINT', () => {
   const outputResult = await engine.probeMaxOutput({ targetMaxTokens: CFG.maxOutputTokens });
   console.log(`  ${outputResult.ok ? '✅' : '❌'} 实际输出 ${outputResult.completionTokens} tok | finish_reason=${outputResult.finishReason} | ${outputResult.tps.toFixed(1)} tok/s`);
 
-  // 3. 长上下文阶梯 (针对 max_model_len=32k 调整梯度；复用引擎的探针文本生成与单请求执行)
+  // 3. 长上下文阶梯 (与浏览器端完全同源: probeContextLimits 内含服务端密度标定 + 冷 Prefill 随机盐)
   console.log(`\n▶ 阶段 3/4: 长上下文承载力探测 [${CFG.ctxTiers.join(', ')}k] + 针尖密匙校验`);
-  const contextResults = [];
-  for (let i = 0; i < CFG.ctxTiers.length; i++) {
-    if (engine.shouldStop) break;
-    const tierK = CFG.ctxTiers[i];
-    const tierLabel = `${tierK}k`;
-    const secret = `KEY-${Math.floor(Math.random() * 89999 + 10000)}`;
-    const payload = engine.generateContextText(tierK, secret);
-    const tierTimeout = Math.max(90, Math.min(360, tierK * 0.45) + CFG.ctxMaxTokens / 8);
-    console.log(`  [${i + 1}/${CFG.ctxTiers.length}] ${tierLabel}: 注入 ~${payload.estimatedTokens.toLocaleString()} tokens, 输出上限 ${CFG.ctxMaxTokens} tok, 超时 ${Math.round(tierTimeout)}s`);
-
-    const record = await engine.executeSingleRequest({
-      messages: [{ role: 'user', content: payload.text }],
-      maxTokens: CFG.ctxMaxTokens,
-      tag: `context-${tierK}k`,
-      customTimeout: tierTimeout,
-      workerId: `ctx_${tierK}k`
-    });
-    const cleanContent = (record.content || '').replace(/\s+/g, '');
-    record.needleHit = record.ok && cleanContent.includes(secret.replace(/\s+/g, ''));
-    record.tierK = tierK;
-    record.tierLabel = tierLabel;
-    record.inputTokens = payload.estimatedTokens;
-    contextResults.push(record);
-    console.log(`    ${record.ok ? '✅ 200' : `❌ HTTP ${record.status}`} | TTFT(prefill) ${record.ttft.toFixed(2)}s | 总耗时 ${record.duration.toFixed(2)}s | 密匙 ${record.needleHit ? '✅ 命中' : '❌ 未命中'}${record.ok ? '' : ' | ' + record.error.slice(0, 100)}`);
-
-    if (i < CFG.ctxTiers.length - 1 && !engine.shouldStop) await sleep(1500);
-  }
+  engine.onContextTierFinish = (record, i, total) => {
+    console.log(`  [${i}/${total}] ${record.tierLabel}: 服务端输入 ${record.usageFromServer ? record.promptTokens.toLocaleString() : '~' + record.inputTokens.toLocaleString()} tokens`
+      + ` | ${record.ok ? '✅ 200' : `❌ HTTP ${record.status}`} | TTFT(prefill) ${record.ttft.toFixed(2)}s | 总耗时 ${record.duration.toFixed(2)}s | 密匙 ${record.needleHit ? '✅ 命中' : '❌ 未命中'}${record.ok ? '' : ' | ' + record.error.slice(0, 100)}`);
+  };
+  const contextResults = await engine.probeContextLimits({
+    tiers: CFG.ctxTiers,
+    maxTokens: CFG.ctxMaxTokens
+  });
 
   // 4. 分析与报告 (复用项目自带 BenchmarkAnalyzer)
   console.log('\n▶ 阶段 4/4: 生成诊断报告 (BenchmarkAnalyzer: Sweet Spot / 压力拐点)');
@@ -205,6 +187,37 @@ process.on('SIGINT', () => {
   writeFileSync(mdPath, markdown, 'utf-8');
   writeLog();
 
+  // 与浏览器端完全同源的 HTML 报告 (report-builder.js 原班构建器)
+  const html = window.reportBuilder.buildReportHtml({
+    modelName: CFG.model,
+    apiUrl: CFG.api,
+    concurrencyResults,
+    contextResults,
+    outputResult,
+    meta: {
+      totalRequests: concurrencyResults.reduce((s, t) => s + t.total, 0) + contextResults.length + (outputResult ? 1 : 0),
+      startedAt: resultJson.meta.startedAt,
+      wallClockSec: resultJson.meta.wallClockSec,
+      runConfig: {
+        levels: CFG.levels,
+        reqsPerLevel: CFG.reqsPerLevel,
+        promptType: 'short',
+        maxOutputTarget: CFG.maxOutputTokens,
+        tiers: CFG.ctxTiers,
+        stream: true,
+        temperature: 0.2,
+        timeoutSec: CFG.timeoutSec,
+        warmup: true,
+        useProxy: false
+      },
+      modelMeta,
+      serverFingerprint: engine.serverFingerprint,
+      useProxy: false
+    }
+  });
+  const htmlPath = path.join(outDir, `report-${stamp}.html`);
+  writeFileSync(htmlPath, html, 'utf-8');
+
   console.log('\n====================== 终端速览 ======================');
   const tp = resultJson.analysis.throughput;
   const sw = resultJson.analysis.sweetSpot;
@@ -215,6 +228,7 @@ process.on('SIGINT', () => {
   console.log(`  总请求量: ${tp.totalCompleted} | 总耗时: ${Math.round((Date.now() - t0) / 1000)}s`);
   console.log('======================================================');
   console.log(`\n📄 完整报告: ${mdPath}`);
+  console.log(`🌐 HTML 报告: ${htmlPath}`);
   console.log(`📦 原始数据: ${jsonPath}`);
   console.log(`📜 运行日志: ${logPath}\n`);
   process.exit(0);

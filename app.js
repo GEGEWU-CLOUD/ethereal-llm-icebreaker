@@ -91,7 +91,9 @@ document.addEventListener('DOMContentLoaded', () => {
     concurrencyTiers: [],
     contextTiers: [],
     outputResult: null,
-    allRawRecords: []
+    allRawRecords: [],
+    startedAt: null,
+    runConfig: {}
   };
 
   // ============ 项目内弹窗系统 (替代原生 alert / confirm) ============
@@ -194,6 +196,227 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 从本地存储还原配置
   loadSavedSettings();
+
+  // ============ LLM 压测结果持久化 (服务端磁盘存档) ============
+  // 跑完自动存档 → 刷新/重启后自动恢复 → 只有点「清空历史记录」才删除
+  const llmRunStore = {
+    currentId: null,      // 当前会话对应的存档 id
+    savedAt: null,        // 存档时间 (展示用)
+    busy: false
+  };
+
+  /** 汇总当前会话的摘要信息 (列表/页头展示用) */
+  function llmSessionSummary() {
+    const tiers = currentSessionData.concurrencyTiers;
+    const ctxs = currentSessionData.contextTiers;
+    const ladderTotal = tiers.reduce((s, t) => s + t.total, 0);
+    const ladderOk = tiers.reduce((s, t) => s + t.successCount, 0);
+    const ctxOk = ctxs.filter(c => c.ok).length;
+    const out = currentSessionData.outputResult;
+    const totalReq = ladderTotal + ctxs.length + (out ? 1 : 0);
+    const okReq = ladderOk + ctxOk + (out && out.ok ? 1 : 0);
+    const peakTps = tiers.length ? Math.max(...tiers.map(t => t.tps || 0)) : 0;
+    const peakTpm = tiers.length ? Math.max(...tiers.map(t => t.tpm || 0)) : 0;
+    const maxCtxTier = ctxs.filter(c => c.ok && c.needleHit).reduce((m, c) => Math.max(m, c.tierK || 0), 0);
+    return {
+      totalRequests: totalReq,
+      successRequests: okReq,
+      successRate: totalReq ? +(okReq / totalReq * 100).toFixed(1) : 0,
+      peakTps: +peakTps.toFixed(1),
+      peakTpm: Math.round(peakTpm),
+      concurrencyLevels: tiers.map(t => t.concurrency),
+      maxContextTierK: maxCtxTier,
+      outputTokens: out && out.ok ? out.completionTokens : 0
+    };
+  }
+
+  /** 构建报告 HTML (与手动导出完全同源) */
+  async function llmBuildReportHtml() {
+    const material = await collectReportMaterial();
+    return material ? window.reportBuilder.buildReportHtml(material) : '';
+  }
+
+  /** 更新结果区工具栏 (在线查看 / 清空历史 + 存档提示) */
+  function llmRefreshResultActions() {
+    const bar = document.getElementById('llmResultActions');
+    const hint = document.getElementById('llmSavedHint');
+    if (!bar) return;
+    const hasData = currentSessionData.concurrencyTiers.length ||
+      currentSessionData.contextTiers.length || currentSessionData.outputResult;
+    // 常驻可见 (保证按钮永远找得到): 有数据 = 可用, 无数据 = 置灰
+    bar.hidden = false;
+    const pv = document.getElementById('btnLlmPreview');
+    const cl = document.getElementById('btnLlmClearHistory');
+    if (pv) pv.disabled = !llmRunStore.currentId && !hasData;
+    if (cl) cl.disabled = !hasData && !llmRunStore.currentId;
+    if (!hasData && !llmRunStore.currentId) {
+      hint.textContent = '暂无压测记录';
+      return;
+    }
+    if (llmRunStore.savedAt) {
+      const t = new Date(llmRunStore.savedAt);
+      const hh = String(t.getHours()).padStart(2, '0');
+      const mm = String(t.getMinutes()).padStart(2, '0');
+      hint.innerHTML = `<b>已保存</b> 至服务端 · ${hh}:${mm} · 刷新不丢失`;
+    } else {
+      hint.textContent = '';
+    }
+  }
+
+  /** 跑完自动存档到服务端磁盘 */
+  async function llmPersistSession() {
+    const hasData = currentSessionData.concurrencyTiers.length ||
+      currentSessionData.contextTiers.length || currentSessionData.outputResult;
+    if (!hasData) return;
+    if (llmRunStore.busy) return;
+    llmRunStore.busy = true;
+    try {
+      const html = await llmBuildReportHtml();
+      const body = {
+        model: modelNameInput.value || '',
+        apiUrl: apiUrlInput.value || '',
+        savedAt: new Date().toISOString(),
+        summary: llmSessionSummary(),
+        session: {
+          concurrencyTiers: currentSessionData.concurrencyTiers,
+          contextTiers: currentSessionData.contextTiers,
+          outputResult: currentSessionData.outputResult,
+          allRawRecords: currentSessionData.allRawRecords.map(r => ({
+            ok: r.ok, tag: r.tag, status: r.status, ttft: r.ttft, duration: r.duration,
+            promptTokens: r.promptTokens, completionTokens: r.completionTokens,
+            tps: r.tps, finishReason: r.finishReason,
+            usageFromServer: !!r.usageFromServer
+          })),
+          startedAt: currentSessionData.startedAt,
+          runConfig: currentSessionData.runConfig || {}
+        },
+        reportHtml: html
+      };
+      if (llmRunStore.currentId) body.id = llmRunStore.currentId;
+      const r = await fetch('/api/llm/runs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const d = await r.json();
+      if (!d.ok) { appendLog('err', `结果存档失败: ${d.error || '未知错误'}`); return; }
+      llmRunStore.currentId = d.id;
+      llmRunStore.savedAt = body.savedAt;
+      llmRefreshResultActions();
+      appendLog('ok', `压测结果已持久化保存 (存档 ${d.id.substring(0, 12)}…, 刷新页面不会丢失)`);
+    } catch (e) {
+      appendLog('err', `结果存档失败: ${e.message}`);
+    } finally {
+      llmRunStore.busy = false;
+    }
+  }
+
+  /** 从存档恢复会话到当前界面 (表格/图表/KPI/诊断) */
+  function llmRestoreSession(run) {
+    const s = run.session || {};
+    currentSessionData.concurrencyTiers = s.concurrencyTiers || [];
+    currentSessionData.contextTiers = s.contextTiers || [];
+    currentSessionData.outputResult = s.outputResult || null;
+    currentSessionData.allRawRecords = s.allRawRecords || [];
+    currentSessionData.startedAt = s.startedAt || null;
+    currentSessionData.runConfig = s.runConfig || {};
+
+    llmRunStore.currentId = run.id;
+    llmRunStore.savedAt = run.savedAt || null;
+
+    // 回填配置 (存档里的端点和模型)
+    if (run.apiUrl) apiUrlInput.value = run.apiUrl;
+    if (run.model) modelNameInput.value = run.model;
+    const cfg = currentSessionData.runConfig || {};
+    if (cfg.tiers && cfg.tiers.length) {
+      document.querySelectorAll('input[name="contextTier"]').forEach(el => {
+        el.checked = cfg.tiers.includes(Number(el.value));
+      });
+    }
+    if (cfg.levels && cfg.levels.length) {
+      document.querySelectorAll('input[name="concurrencyLevel"]').forEach(el => {
+        el.checked = cfg.levels.includes(Number(el.value));
+      });
+    }
+
+    // 重建表格 / 图表 / KPI / 诊断
+    updateConcurrencyTable(currentSessionData.concurrencyTiers);
+    updateContextOutputTable();
+    window.chartManager.updateConcurrencyCharts(currentSessionData.concurrencyTiers);
+    window.chartManager.updateContextCharts(currentSessionData.contextTiers);
+    updateLiveAnalysis(true);
+    valCompletedReqs.textContent = `已测: ${currentSessionData.allRawRecords.length}`;
+    llmRefreshResultActions();
+    appendLog('sys', `已从服务端存档恢复上次压测结果 (${run.model || '-'} @ ${run.apiUrl || '-'} · 保存于 ${run.savedAt || '-'})`);
+  }
+
+  /** 启动时尝试恢复最近一次存档 */
+  async function llmRestoreLatest() {
+    try {
+      const r = await fetch('/api/llm/run');
+      if (!r.ok) return false;                 // 404 = 无存档, 正常
+      const d = await r.json();
+      if (!d.ok || !d.run) return false;
+      const s = d.run.session || {};
+      const empty = !(s.concurrencyTiers && s.concurrencyTiers.length) &&
+        !(s.contextTiers && s.contextTiers.length) && !s.outputResult;
+      if (empty) return false;
+      llmRestoreSession(d.run);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 在线查看: 使用服务端持久存档的预览地址 (刷新后依然可访问)
+  document.getElementById('btnLlmPreview').addEventListener('click', async () => {
+    const btn = document.getElementById('btnLlmPreview');
+    if (!llmRunStore.currentId) {
+      // 无存档时现场补存一次
+      await llmPersistSession();
+      if (!llmRunStore.currentId) { uiToast('暂无可用报告, 请先运行压测', 'warn', 5200); return; }
+    }
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '生成中…';
+    try {
+      const url = '/api/llm/preview/' + encodeURIComponent(llmRunStore.currentId);
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+      appendLog('ok', '报告在线查看已打开: ' + url);
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  });
+
+  // 清空历史: 唯一会删除持久化结果的操作
+  document.getElementById('btnLlmClearHistory').addEventListener('click', async () => {
+    const hasData = currentSessionData.concurrencyTiers.length ||
+      currentSessionData.contextTiers.length || currentSessionData.outputResult;
+    if (!hasData && !llmRunStore.currentId) {
+      uiToast('当前没有可清空的压测结果', 'info', 4200);
+      return;
+    }
+    const ok = await uiConfirm('确定清空全部 LLM 压测历史记录与存档报告？清空后不可恢复，在途任务不受影响。');
+    if (!ok) return;
+    try {
+      const r = await fetch('/api/llm/clear', { method: 'POST' });
+      const d = await r.json();
+      if (!d.ok) { uiToast(d.error || '清空失败', 'error', 5200); return; }
+      // 清空界面状态
+      resetBenchmarkSession();
+      currentSessionData.startedAt = null;
+      llmRunStore.currentId = null;
+      llmRunStore.savedAt = null;
+      llmRefreshResultActions();
+      window.chartManager.updateConcurrencyCharts([]);
+      window.chartManager.updateContextCharts([]);
+      updateLiveAnalysis(true);
+      appendLog('ok', `已清空 ${d.cleared || 0} 条 LLM 压测存档 (服务端磁盘记录已删除)`);
+      uiToast(`已清空 ${d.cleared || 0} 条压测历史记录`, 'ok', 4200);
+    } catch (e) {
+      uiToast('清空失败: ' + e.message, 'error', 6000);
+    }
+  });
 
   // ============ 顶层模式切换: LLM API 压测 / GPU 服务器压测 ============
   let currentBenchMode = 'llm';
@@ -552,9 +775,26 @@ document.addEventListener('DOMContentLoaded', () => {
     appendLog('sys', `\n🚀 ============ 启动大模型基准测试流水线 [${new Date().toLocaleTimeString()}] ============`);
     appendLog('sys', `目标模型: ${modelNameInput.value} | 接口地址: ${apiUrlInput.value}`);
 
+    // 记录本次运行的真实配置 (供导出报告的 测试环境/复现信息 章节使用)
+    currentSessionData.runConfig = {
+      mode: activeTab,
+      stream: window.stressEngine.config.stream,
+      temperature: 0.2,
+      timeoutSec: window.stressEngine.config.timeoutSec,
+      useProxy: window.stressEngine.config.useProxy,
+      warmup: true
+    };
+
     try {
       if (activeTab === 'tab-full') {
         const reqCountPerLevel = Number(document.querySelector('input[name="fullReqCount"]:checked')?.value || 20);
+        Object.assign(currentSessionData.runConfig, {
+          levels: [5, 10, 20, 50, 100],
+          reqsPerLevel: reqCountPerLevel,
+          promptType: 'short',
+          maxOutputTarget: 8192,
+          tiers: [64, 128, 256, 512, 1024]
+        });
 
         // 阶段 1: 最大输出探测 (0% -> 15%)
         hudStateText.textContent = '阶段 1/3: 正在探测单次最大输出上限...';
@@ -598,6 +838,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const reqs = Number(document.getElementById('requestsPerLevel').value || 20);
         const promptType = document.getElementById('promptSizeConcurrency').value;
+        Object.assign(currentSessionData.runConfig, { levels: selectedLevels, reqsPerLevel: reqs, promptType });
 
         await window.stressEngine.runConcurrencyLadder({
           levels: selectedLevels,
@@ -620,9 +861,11 @@ document.addEventListener('DOMContentLoaded', () => {
           globalProgressOffset: 0,
           globalProgressSpan: 100
         });
+        Object.assign(currentSessionData.runConfig, { tiers: selectedTiers });
 
       } else if (activeTab === 'tab-output') {
         const targetTokens = Number(document.getElementById('outputTargetTokens').value || 8192);
+        Object.assign(currentSessionData.runConfig, { maxOutputTarget: targetTokens });
         await window.stressEngine.probeMaxOutput({
           targetMaxTokens: targetTokens,
           globalProgressOffset: 0,
@@ -641,6 +884,8 @@ document.addEventListener('DOMContentLoaded', () => {
       stopLiveTimer();
       setRunState(false);
       updateLiveAnalysis(true);
+      // 自动持久化: 无论成功/中断, 有数据就存档 (刷新不丢)
+      llmPersistSession();
     }
   });
 
@@ -743,7 +988,7 @@ document.addEventListener('DOMContentLoaded', () => {
     reportSweetSpot.innerHTML = `
       <p><strong>最佳并发度推荐：<span class="diag-success">${sweet.bestConcurrency} 并发</span></strong></p>
       <p style="margin-top:6px;">${sweet.reason}</p>
-      <p style="font-size:11px; color:#64748b; margin-top:5px;">* 加权考量实际 RPS 增益、P90 延迟劣化及请求成功率，为生产网关最推荐的并发限制值。</p>
+      <p style="font-size:11px; color:var(--muted); margin-top:5px;">* 加权考量实际 RPS 增益、P90 延迟劣化及请求成功率，为生产网关最推荐的并发限制值。</p>
     `;
 
     reportStressPoint.innerHTML = `
@@ -879,46 +1124,41 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnExportHtml = document.getElementById('btnExportHtml');
   const btnExportPdf = document.getElementById('btnExportPdf');
 
-  /** 汇集当前会话的 Analyzer 五项分析结果 + 四张图表快照, 供 HTML/PDF 报告共用 */
-  function collectReportMaterial() {
+  /** 汇集当前会话真实记录 + 服务端元数据, 供 HTML/PDF 报告共用 */
+  async function collectReportMaterial() {
     const hasData = currentSessionData.concurrencyTiers.length ||
       currentSessionData.contextTiers.length || currentSessionData.outputResult;
     if (!hasData) return null;
 
-    const analyzer = window.benchmarkAnalyzer;
-    analyzer.setData({
-      concurrencyResults: currentSessionData.concurrencyTiers,
-      contextResults: currentSessionData.contextTiers,
-      outputResult: currentSessionData.outputResult
-    });
-    const analysis = {
-      throughput: analyzer.analyzeThroughput(),
-      sweetSpot: analyzer.calculateSweetSpot(),
-      pressure: analyzer.diagnosePressurePoints(),
-      context: analyzer.analyzeContextWindow(),
-      maxOutput: analyzer.analyzeMaxOutput()
-    };
-
-    const charts = {};
+    // 拉取服务端模型元数据 (max_model_len / 模型根路径), 失败不影响报告主体
+    let modelMeta = null;
     try {
-      for (const name of ['latency', 'throughput', 'context', 'status']) {
-        const inst = window.chartManager.charts[name];
-        if (inst && inst.canvas) charts[name] = inst.canvas.toDataURL('image/png');
-      }
-    } catch (e) { /* 图表快照失败不影响报告主体 */ }
+      const list = await window.stressEngine.fetchModelsFull();
+      modelMeta = (list || []).find(m => m.id === modelNameInput.value) || (list || [])[0] || null;
+    } catch (e) { /* 元信息拉取失败时报告如实标注未知 */ }
 
     return {
-      modelName: `${modelNameInput.value || 'unknown'} @ ${apiUrlInput.value || 'unknown'}`,
-      analysis,
-      charts,
+      modelName: modelNameInput.value || 'unknown',
+      apiUrl: apiUrlInput.value || 'unknown',
       concurrencyResults: currentSessionData.concurrencyTiers,
       contextResults: currentSessionData.contextTiers,
-      meta: { totalRequests: currentSessionData.allRawRecords.length }
+      outputResult: currentSessionData.outputResult,
+      meta: {
+        totalRequests: currentSessionData.allRawRecords.length,
+        startedAt: currentSessionData.startedAt,
+        wallClockSec: currentSessionData.startedAt
+          ? Math.round((Date.now() - new Date(currentSessionData.startedAt).getTime()) / 1000)
+          : null,
+        runConfig: currentSessionData.runConfig || {},
+        modelMeta,
+        serverFingerprint: window.stressEngine.serverFingerprint || '',
+        useProxy: window.stressEngine.config.useProxy
+      }
     };
   }
 
-  btnExportHtml.addEventListener('click', () => {
-    const material = collectReportMaterial();
+  btnExportHtml.addEventListener('click', async () => {
+    const material = await collectReportMaterial();
     if (!material) { uiToast('当前还没有可导出的测试数据，请先运行一次压测。', 'warn', 5200); return; }
 
     const html = window.reportBuilder.buildReportHtml(material);
@@ -933,7 +1173,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnExportPdf.addEventListener('click', async () => {
-    const material = collectReportMaterial();
+    const material = await collectReportMaterial();
     if (!material) { uiToast('当前还没有可导出的测试数据，请先运行一次压测。', 'warn', 5200); return; }
     if (typeof html2pdf === 'undefined') {
       uiToast('PDF 组件未加载 (vendor/html2pdf.bundle.min.js)，请检查部署完整性。', 'error', 6000);      return;
@@ -945,9 +1185,9 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.textContent = 'PDF 生成中…';
     appendLog('info', '正在渲染 PDF 报告 (含图表快照, 可能需要数秒)…');
 
-    // 离屏容器承载报告 DOM, 供 html2pdf 截取
+    // 离屏容器承载报告 DOM, 供 html2pdf 截取 (报告为浅色主题)
     const holder = document.createElement('div');
-    holder.style.cssText = 'position:fixed;left:-20000px;top:0;width:820px;background:#0A0A0A;z-index:-1;';
+    holder.style.cssText = 'position:fixed;left:-20000px;top:0;width:820px;background:#f8fafc;z-index:-1;';
     try {
       const doc = new DOMParser().parseFromString(
         window.reportBuilder.buildReportHtml(material), 'text/html');
@@ -960,9 +1200,9 @@ document.addEventListener('DOMContentLoaded', () => {
         margin: [8, 8, 10, 8],
         filename: window.reportBuilder.buildFilename(modelNameInput.value, 'pdf'),
         image: { type: 'jpeg', quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#0A0A0A', logging: false },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#f8fafc', logging: false },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'], avoid: ['.kpi', '.diag', 'tr'] }
+        pagebreak: { mode: ['css', 'legacy'], avoid: ['.metric', 'tr', '.note'] }
       }).from(holder).save();
       appendLog('ok', 'PDF 报告已生成并开始下载。');
     } catch (err) {
@@ -1404,10 +1644,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const clsName = { real: '真实观察', false: '误报', env: '环境限制/待复核', fail: '失败项' };
     const adjHtml = (parsed.adjudications || []).filter(a => a.level !== 'PASS').map(a =>
-      `<div>· [${a.level === 'FAIL' ? '✗' : '⑂'} <b style="color:${a.cls === 'real' ? '#F5A623' : a.cls === 'false' ? '#3B9EFF' : a.cls === 'fail' ? 'var(--danger)' : 'var(--gray-400)'}">${clsName[a.cls] || a.cls}</b>] ${b.esc(a.text)}</div>`
+      `<div>· [${a.level === 'FAIL' ? '✗' : '⑂'} <b style="color:${a.cls === 'real' ? 'var(--warning)' : a.cls === 'false' ? 'var(--info)' : a.cls === 'fail' ? 'var(--danger)' : 'var(--gray-400)'}">${clsName[a.cls] || a.cls}</b>] ${b.esc(a.text)}</div>`
     ).join('');
 
-    const badgeColor = parsed.verdictCls === 'pass' ? '#35C46E' : (parsed.verdictCls === 'warn' ? '#F5A623' : 'var(--danger)');
+    const badgeColor = parsed.verdictCls === 'pass' ? 'var(--success)' : (parsed.verdictCls === 'warn' ? 'var(--warning)' : 'var(--danger)');
     return `
     <div class="gpu-result-block" data-job="${jobId}" style="border:1px solid var(--gray-200);border-radius:12px;padding:16px;margin-bottom:16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
@@ -1425,11 +1665,11 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px;">
-        ${kpi(gpus.length ? `${burn.okCount || 0}/${gpus.length} OK` : '-', 'GPU 压测', '#35C46E')}
-        ${kpi(sm.tmaxAll != null ? Math.round(sm.tmaxAll) + '°C' : '-', '最高温度', tmaxHot ? '#F5A623' : 'inherit')}
+        ${kpi(gpus.length ? `${burn.okCount || 0}/${gpus.length} OK` : '-', 'GPU 压测', 'var(--success)')}
+        ${kpi(sm.tmaxAll != null ? Math.round(sm.tmaxAll) + '°C' : '-', '最高温度', tmaxHot ? 'var(--warning)' : 'inherit')}
         ${kpi(sm.pmaxAll != null ? Math.round(sm.pmaxAll) + ' W' : '-', '峰值功耗', 'inherit')}
         ${kpi(sm.gflopsMax != null ? Math.round(sm.gflopsMax) : '-', '算力峰值 GFLOPS', 'inherit')}
-        ${kpi(burn.eccUE != null ? `CE${burn.eccCE}/UE${burn.eccUE}` : '未检测', '内存 ECC', (burn.eccUE || 0) > 0 ? 'var(--danger)' : '#35C46E')}
+        ${kpi(burn.eccUE != null ? `CE${burn.eccCE}/UE${burn.eccUE}` : '未检测', '内存 ECC', (burn.eccUE || 0) > 0 ? 'var(--danger)' : 'var(--success)')}
       </div>
       <div class="table-responsive" style="border:1px solid var(--gray-200);">
         <table class="clean-table" style="width:100%;">
@@ -1494,7 +1734,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const orig = btn.innerHTML;
       btn.disabled = true; btn.textContent = '生成中…';
       const holder = document.createElement('div');
-      holder.style.cssText = 'position:fixed;left:-20000px;top:0;width:820px;background:#f3f5f9;z-index:-1;';
+      holder.style.cssText = 'position:fixed;left:-20000px;top:0;width:820px;background:#f5f6f7;z-index:-1;';
       try {
         const doc = new DOMParser().parseFromString(builder.buildHtmlReport(parsed), 'text/html');
         const styleEl = doc.querySelector('style');
@@ -1505,7 +1745,7 @@ document.addEventListener('DOMContentLoaded', () => {
           margin: [8, 8, 10, 8],
           filename: builder.buildFilename(parsed, 'pdf'),
           image: { type: 'jpeg', quality: 0.95 },
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#f3f5f9', logging: false },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#f5f6f7', logging: false },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
           pagebreak: { mode: ['css', 'legacy'], avoid: ['.kpi', '.warn-item', 'tr', '.chart'] }
         }).from(holder).save();
@@ -2198,9 +2438,9 @@ document.addEventListener('DOMContentLoaded', () => {
       `<td>${b.fmt(g.hbmMax, '%')}</td><td>${g.sampleCount || 0}</td></tr>`).join('');
     const clsName = { real: '真实观察', false: '误报', env: '环境限制/待复核', fail: '失败项' };
     const adjHtml = (parsed.adjudications || []).map(a =>
-      `<div>· [${a.level === 'FAIL' ? '✗' : '⑂'} <b style="color:${a.cls === 'real' ? '#F5A623' : a.cls === 'fail' ? 'var(--danger)' : 'var(--gray-400)'}">${clsName[a.cls] || a.cls}</b>] ${b.esc(a.text)}</div>`
+      `<div>· [${a.level === 'FAIL' ? '✗' : '⑂'} <b style="color:${a.cls === 'real' ? 'var(--warning)' : a.cls === 'fail' ? 'var(--danger)' : 'var(--gray-400)'}">${clsName[a.cls] || a.cls}</b>] ${b.esc(a.text)}</div>`
     ).join('');
-    const badgeColor = parsed.verdictCls === 'pass' ? '#35C46E' : (parsed.verdictCls === 'warn' ? '#F5A623' : 'var(--danger)');
+    const badgeColor = parsed.verdictCls === 'pass' ? 'var(--success)' : (parsed.verdictCls === 'warn' ? 'var(--warning)' : 'var(--danger)');
     return `
     <div class="gpu-result-block" data-job="${jobId}" style="border:1px solid var(--gray-200);border-radius:12px;padding:16px;margin-bottom:16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
@@ -2209,7 +2449,7 @@ document.addEventListener('DOMContentLoaded', () => {
           ${m.hostIps && m.hostIps.length ? `<span style="font-size:11px;color:var(--gray-400);">IP: ${b.esc(m.hostIps.join(', '))}</span>` : ''}
           ${m.model ? `<span style="font-size:11px;color:var(--gray-400);">${b.esc(m.model)}</span>` : ''}
           <span style="background:${badgeColor};color:#fff;padding:2px 12px;border-radius:999px;font-size:12px;font-weight:700;">${b.esc(parsed.verdict)}</span>
-          ${burn.dmiMissing ? `<span style="font-size:11px;color:#F5A623;">仅基线检查 (ToolBox 未装)</span>` : ''}
+          ${burn.dmiMissing ? `<span style="font-size:12px;color:var(--warning);">仅基线检查 (ToolBox 未装)</span>` : ''}
           <span style="font-size:11px;color:var(--gray-400);">${m.burnStart ? b.esc(m.burnStart) + ' · ' : ''}${m.durationSec ? Math.round(m.durationSec / 60) + ' 分钟' : ''}${m.source === 'ssh' ? ' · SSH 自动' : ' · 手动上传'}</span>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -2221,10 +2461,10 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px;">
         ${kpi(cards.length ? cards.length + ' 张' : '-', 'NPU 数量', 'inherit')}
-        ${kpi(sm.tmaxAll != null ? Math.round(sm.tmaxAll) + '°C' : '-', '最高温度', (sm.tmaxAll || 0) >= 80 ? '#F5A623' : 'inherit')}
+        ${kpi(sm.tmaxAll != null ? Math.round(sm.tmaxAll) + '°C' : '-', '最高温度', (sm.tmaxAll || 0) >= 80 ? 'var(--warning)' : 'inherit')}
         ${kpi(sm.pmaxAll != null ? Math.round(sm.pmaxAll) + ' W' : '-', '峰值功耗', 'inherit')}
-        ${kpi(burn.dmiMissing ? '未安装' : '已安装', 'MindX ToolBox', burn.dmiMissing ? '#F5A623' : '#35C46E')}
-        ${kpi(burn.passCount != null ? burn.passCount + ' 项' : '-', '健康检查通过', '#35C46E')}
+        ${kpi(burn.dmiMissing ? '未安装' : '已安装', 'MindX ToolBox', burn.dmiMissing ? 'var(--warning)' : 'var(--success)')}
+        ${kpi(burn.passCount != null ? burn.passCount + ' 项' : '-', '健康检查通过', 'var(--success)')}
       </div>
       <div class="table-responsive" style="border:1px solid var(--gray-200);">
         <table class="clean-table" style="width:100%;">
@@ -2284,7 +2524,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const orig = btn.innerHTML;
       btn.disabled = true; btn.textContent = '生成中…';
       const holder = document.createElement('div');
-      holder.style.cssText = 'position:fixed;left:-20000px;top:0;width:820px;background:#f3f5f9;z-index:-1;';
+      holder.style.cssText = 'position:fixed;left:-20000px;top:0;width:820px;background:#f5f6f7;z-index:-1;';
       try {
         const doc = new DOMParser().parseFromString(builder.buildHtmlReport(parsed), 'text/html');
         const styleEl = doc.querySelector('style');
@@ -2295,7 +2535,7 @@ document.addEventListener('DOMContentLoaded', () => {
           margin: [8, 8, 10, 8],
           filename: builder.buildFilename(parsed, 'pdf'),
           image: { type: 'jpeg', quality: 0.95 },
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#f3f5f9', logging: false },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#f5f6f7', logging: false },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
           pagebreak: { mode: ['css', 'legacy'], avoid: ['.kpi', '.warn-item', 'tr', '.chart'] }
         }).from(holder).save();
@@ -2439,6 +2679,8 @@ document.addEventListener('DOMContentLoaded', () => {
     currentSessionData.contextTiers = [];
     currentSessionData.outputResult = null;
     currentSessionData.allRawRecords = [];
+    currentSessionData.startedAt = new Date().toISOString();
+    currentSessionData.runConfig = {};
     updateConcurrencyTable([]);
     updateContextOutputTable();
     progressBarFill.style.width = '0%';
@@ -2446,6 +2688,7 @@ document.addEventListener('DOMContentLoaded', () => {
     hudTimer.textContent = '00:00.0';
     hudTokenCount.innerHTML = '0 <small>tok</small>';
     hudLiveSpeed.innerHTML = '0.0 <small>tok/s</small>';
+    llmRefreshResultActions();
   }
 
   function applyEngineConfig() {
@@ -2517,4 +2760,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (e) {}
   }
+
+  // ============ 启动时恢复上次 LLM 压测结果 (服务端磁盘存档) ============
+  // 放在所有函数定义之后调用; 失败(无存档/未登录)时静默跳过
+  setTimeout(() => { llmRestoreLatest(); }, 300);
 });

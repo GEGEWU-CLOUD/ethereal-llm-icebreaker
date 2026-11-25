@@ -21,3 +21,6 @@ __pycache__/
 pelican-*.svg
 packages/
 keys/
+# LLM 压测会话存档 (运行时数据)
+llm-runs.json
+llm-runs.json.tmp

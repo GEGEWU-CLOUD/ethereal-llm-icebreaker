@@ -176,6 +176,29 @@ def get_npu_manager():
 _REPORT_VIEWS = {}
 _REPORT_VIEWS_LOCK = threading.Lock()
 
+# LLM 压测会话持久化存档: 磁盘 JSON (刷新/重启不丢), 供刷新后恢复与在线预览
+_LLM_RUNS_FILE = os.path.join(DATA_DIR, 'llm-runs.json')
+_LLM_RUNS_LOCK = threading.Lock()
+_LLM_RUNS_MAX = 30
+
+
+def _llm_runs_load():
+    """读取磁盘存档 (损坏/缺失时返回空列表)"""
+    try:
+        with open(_LLM_RUNS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _llm_runs_save(runs):
+    """原子写回磁盘 (先写临时文件再替换), 限制保留条数"""
+    tmp = _LLM_RUNS_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(runs[-_LLM_RUNS_MAX:], f, ensure_ascii=False)
+    os.replace(tmp, _LLM_RUNS_FILE)
+
 def get_gpu_manager():
     """GpuJobPool 单例 (gpu_agent 懒加载, paramiko 未装时不影响其他功能)"""
     global GPU_MANAGER
@@ -321,6 +344,60 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             if not self.is_authenticated():
                 return self._send_json({"ok": False, "error": "未登录"}, 401)
             return self._send_json({"ok": True, "jobs": get_gpu_manager().status_all()})
+
+        # LLM 压测会话: 持久化存档 (磁盘), 刷新/重启不丢; 手动清空才删除
+        if path == '/api/llm/runs':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            with _LLM_RUNS_LOCK:
+                runs = _llm_runs_load()
+            # 列表只返回摘要, 避免把完整记录一次性推给浏览器
+            brief = [{
+                "id": r.get("id"),
+                "model": r.get("model"),
+                "apiUrl": r.get("apiUrl"),
+                "savedAt": r.get("savedAt"),
+                "summary": r.get("summary") or {}
+            } for r in runs]
+            return self._send_json({"ok": True, "runs": brief})
+        # 取单条完整存档 (前端恢复用)
+        if path == '/api/llm/run':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            run_id = (qs.get('id') or [None])[0]
+            with _LLM_RUNS_LOCK:
+                runs = _llm_runs_load()
+            if not run_id:
+                if not runs:
+                    return self._send_json({"ok": False, "error": "暂无存档"}, 404)
+                return self._send_json({"ok": True, "run": runs[-1]})
+            for r in runs:
+                if r.get("id") == run_id:
+                    return self._send_json({"ok": True, "run": r})
+            return self._send_json({"ok": False, "error": "存档不存在或已清空"}, 404)
+        # 在线预览: 由存档的报表 HTML 直接输出 (持久, 随机 token 复用同一份)
+        if path.startswith('/api/llm/preview/'):
+            if not self.is_authenticated():
+                return self._reject_unauthenticated()
+            run_id = urllib.parse.unquote(path.split('/api/llm/preview/', 1)[1].strip('/'))
+            with _LLM_RUNS_LOCK:
+                runs = _llm_runs_load()
+            target = None
+            for r in runs:
+                if r.get("id") == run_id:
+                    target = r
+                    break
+            if not target or not target.get("reportHtml"):
+                return self._send_json({"ok": False, "error": "报告不存在或已清空"}, 404)
+            body = target["reportHtml"].encode('utf-8')
+            self._send_cors_headers(200, content_type="text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if path == '/api/gpu/result':
             if not self.is_authenticated():
                 return self._send_json({"ok": False, "error": "未登录"}, 401)
@@ -627,6 +704,52 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json({"ok": True, "result": parsed})
             except Exception as e:
                 return self._send_json({"ok": False, "error": "解析失败: {}".format(e)[:300]}, 500)
+
+        # LLM 压测会话存档: 保存完整会话 (记录 + 报告 HTML), 供刷新恢复与在线预览
+        if path == '/api/llm/runs':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            try:
+                payload = self._read_json_body()
+            except Exception:
+                return self._send_json({"ok": False, "error": "请求体格式错误"}, 400)
+            base = str(payload.get('id') or '').strip() or ('run_' + secrets.token_hex(6))
+            session = payload.get('session')
+            if not isinstance(session, dict):
+                return self._send_json({"ok": False, "error": "缺少 session 数据"}, 400)
+            report_html = str(payload.get('reportHtml') or '')
+            if len(report_html) > 8 * 1024 * 1024:
+                return self._send_json({"ok": False, "error": "报告内容过大"}, 413)
+            entry = {
+                "id": base,
+                "model": str(payload.get('model') or ''),
+                "apiUrl": str(payload.get('apiUrl') or ''),
+                "savedAt": payload.get('savedAt') or time.strftime('%Y-%m-%dT%H:%M:%S'),
+                "summary": payload.get('summary') or {},
+                "session": session,
+                "reportHtml": report_html
+            }
+            with _LLM_RUNS_LOCK:
+                runs = [r for r in _llm_runs_load() if r.get("id") != base]
+                runs.append(entry)
+                try:
+                    _llm_runs_save(runs)
+                except Exception as e:
+                    return self._send_json({"ok": False, "error": "存档写入失败: {}".format(e)[:200]}, 500)
+            return self._send_json({"ok": True, "id": base, "previewUrl": "/api/llm/preview/" + urllib.parse.quote(base)})
+
+        # LLM 手动清空存档 (只有此操作会删除持久化结果)
+        if path == '/api/llm/clear':
+            if not self.is_authenticated():
+                return self._send_json({"ok": False, "error": "未登录"}, 401)
+            with _LLM_RUNS_LOCK:
+                runs = _llm_runs_load()
+                n = len(runs)
+                try:
+                    _llm_runs_save([])
+                except Exception as e:
+                    return self._send_json({"ok": False, "error": "清空失败: {}".format(e)[:200]}, 500)
+            return self._send_json({"ok": True, "cleared": n})
 
         # 报告在线查看: 前端提交已生成的 HTML, 返回浏览器可直达的 URL
         if path == '/api/gpu/report':

@@ -7,121 +7,429 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
   <style>
-    html, body {
-      height: 100%;
-      margin: 0;
-    }
+    html, body { height: 100%; margin: 0; }
+
+    /* ══ 登录页: 左侧科技主视觉 + 右侧登录卡 ══ */
     .login-wrap {
       min-height: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr);
+      background: var(--canvas, #f5f6f7);
+    }
+
+    /* ── 左: 科技主视觉 ── */
+    .login-hero {
+      position: relative;
+      overflow: hidden;
       display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: clamp(22px, 3vh, 34px);
+      padding: 44px clamp(32px, 5vw, 72px);
+      color: #e7f0ec;
+      background:
+        radial-gradient(ellipse 90% 70% at 12% 0%, rgba(20, 184, 140, 0.24), transparent 60%),
+        radial-gradient(ellipse 70% 60% at 92% 100%, rgba(29, 83, 125, 0.42), transparent 62%),
+        linear-gradient(150deg, #0a1a17 0%, #0b1d22 46%, #071114 100%);
+      isolation: isolate;
+    }
+
+    /* 细网格底纹 */
+    .login-hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+      background-size: 44px 44px;
+      -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 20%, transparent 78%);
+      mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 20%, transparent 78%);
+      z-index: -1;
+    }
+
+    /* 扫描线 */
+    .login-hero::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(79, 191, 154, 0.75), transparent);
+      animation: hero-scan 7s linear infinite;
+      opacity: .7;
+      z-index: -1;
+    }
+    @keyframes hero-scan {
+      0%   { transform: translateY(0); opacity: 0; }
+      8%   { opacity: .7; }
+      92%  { opacity: .7; }
+      100% { transform: translateY(100vh); opacity: 0; }
+    }
+
+    .hero-brand { display: flex; align-items: center; gap: 14px; }
+    .hero-logo {
+      width: 46px; height: 46px;
+      border-radius: 12px;
+      background: linear-gradient(140deg, #0f8f6d, #075f49);
+      display: flex; align-items: center; justify-content: center;
+      flex: none;
+      box-shadow: 0 0 0 1px rgba(120, 226, 191, 0.28), 0 10px 28px rgba(7, 95, 73, 0.5);
+    }
+    .hero-title { font-size: 22px; font-weight: 700; letter-spacing: .01em; color: #f2fbf7; line-height: 1.2; }
+    .hero-title small {
+      display: block; font-size: 11px; font-weight: 500;
+      color: #8fd8bf; letter-spacing: .16em; text-transform: uppercase; margin-top: 4px;
+    }
+
+    .hero-copy { max-width: 640px; }
+    .hero-kicker {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase;
+      color: #6ee7b7;
+      border: 1px solid rgba(110, 231, 183, 0.32);
+      background: rgba(16, 185, 129, 0.10);
+      padding: 5px 12px; border-radius: 999px;
+      margin-bottom: 16px;
+    }
+    .hero-kicker i {
+      width: 6px; height: 6px; border-radius: 50%; background: #34d399;
+      box-shadow: 0 0 10px #34d399;
+      animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+    .hero-h1 {
+      font-size: clamp(25px, 2.4vw, 36px);
+      line-height: 1.26;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      color: #f4fdf9;
+      margin: 0 0 12px;
+    }
+    .hero-h1 em {
+      font-style: normal;
+      background: linear-gradient(92deg, #5eead4, #7dd3a0 60%, #a7f3d0);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent; color: transparent;
+    }
+    .hero-p { font-size: 13.5px; line-height: 1.75; color: #9fb6ae; margin: 0 0 26px; max-width: 560px; }
+
+    /* 功能亮点 */
+    .hero-feats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 11px;
+      max-width: 640px;
+    }
+    .feat {
+      display: flex; align-items: flex-start; gap: 11px;
+      padding: 13px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.075);
+      background: rgba(255, 255, 255, 0.035);
+      transition: border-color .2s, background .2s;
+    }
+    .feat:hover { border-color: rgba(110, 231, 183, 0.38); background: rgba(16, 185, 129, 0.075); }
+    .feat-ico {
+      width: 32px; height: 32px; flex: none;
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(16, 185, 129, 0.14);
+      border: 1px solid rgba(110, 231, 183, 0.26);
+      color: #6ee7b7;
+    }
+    .feat-ico.blue   { background: rgba(56, 130, 190, 0.16); border-color: rgba(125, 190, 240, 0.26); color: #93c5ee; }
+    .feat-ico.amber  { background: rgba(217, 152, 40, 0.16); border-color: rgba(240, 200, 120, 0.26); color: #f0c878; }
+    .feat-ico.violet { background: rgba(139, 105, 214, 0.16); border-color: rgba(186, 160, 245, 0.26); color: #c4b0f5; }
+    .feat-t { font-size: 13px; font-weight: 600; color: #eaf6f1; line-height: 1.45; }
+    .feat-d { font-size: 11.5px; line-height: 1.55; color: #8ea8a0; margin-top: 2px; }
+
+    /* 数据插画 */
+    .hero-illus {
+      max-width: 640px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015));
+      padding: 12px 16px 8px;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+    }
+    .illus-head {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+      color: #7e968f; margin-bottom: 4px;
+      font-family: ui-monospace, Consolas, monospace;
+    }
+    .illus-dots { display: flex; gap: 5px; }
+    .illus-dots span { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.16); }
+    .illus-dots span:first-child { background: rgba(94, 234, 212, .65); }
+    .hero-illus svg { display: block; width: 100%; height: auto; }
+
+    /* 底部可信信息 */
+    .hero-foot {
+      display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+      font-size: 11.5px; color: #7e968f;
+    }
+    .hero-foot span { display: inline-flex; align-items: center; gap: 6px; }
+    .hero-foot b { color: #cdece0; font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
+    .hero-foot .sep { width: 1px; height: 11px; background: rgba(255,255,255,.12); }
+
+    /* ── 右: 登录卡 ── */
+    .login-panel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      background:
-        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(22, 163, 74, 0.16), transparent),
-        var(--black, #0A0A0A);
-      padding: 24px;
-      box-sizing: border-box;
+      gap: 0;
+      padding: 40px clamp(24px, 4vw, 64px);
+      background: var(--canvas, #f5f6f7);
+    }
+    /* 右上角淡青径向光, 呼应左栏但不抢焦点 */
+    .login-panel::before {
+      content: "";
+      position: absolute;
+      top: -10%; right: -10%;
+      width: 420px; height: 420px;
+      background: radial-gradient(circle, rgba(7, 95, 73, 0.07), transparent 68%);
+      pointer-events: none;
     }
     .login-card {
+      position: relative;
       width: 100%;
-      max-width: 400px;
-      background: var(--gray-800, #161616);
-      border: 1px solid var(--gray-600, #2A2A2A);
-      border-radius: 14px;
-      padding: 34px 32px 28px;
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+      max-width: 392px;
+      background: var(--surface, #fff);
+      border: 1px solid var(--divider, #e6e8eb);
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 2px 6px rgb(25 28 32 / 0.04), 0 16px 40px rgb(25 28 32 / 0.06);
     }
-    .login-brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 6px;
-    }
+    .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
     .login-brand svg { width: 34px; height: 34px; flex: none; }
     .login-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: var(--white, #fff);
-      letter-spacing: 0.5px;
+      font-size: 20px; line-height: 28px; font-weight: 700;
+      color: var(--text, #191c20); letter-spacing: 0;
     }
     .login-sub {
-      font-size: 12px;
-      color: var(--gray-400, #8A8A8A);
+      font-size: 13px; line-height: 20px;
+      color: var(--muted, #565d65);
       margin: 0 0 24px;
     }
     .login-form .form-item { margin-bottom: 16px; }
-    .login-form .form-input {
-      width: 100%;
-      box-sizing: border-box;
-    }
+    .login-form .form-input { width: 100%; box-sizing: border-box; }
+    .login-form .form-label { font-size: 14px; font-weight: 600; color: var(--text, #191c20); }
     .login-error {
       display: none;
-      background: rgba(22, 163, 74, 0.12);
-      border: 1px solid rgba(22, 163, 74, 0.45);
-      color: #EA580C;
+      background: var(--danger-bg, #fff0f1);
+      border: 1px solid rgb(180 35 48 / .28);
+      color: var(--danger-c, #b42330);
       border-radius: 8px;
-      font-size: 12.5px;
-      line-height: 1.6;
-      padding: 10px 12px;
-      margin-bottom: 16px;
+      font-size: 13px; line-height: 20px;
+      padding: 10px 12px; margin-bottom: 16px;
       word-break: break-all;
     }
     .login-error.visible { display: block; }
-    .login-submit {
-      width: 100%;
-      margin-top: 6px;
-      padding: 12px 0;
-      font-size: 14px;
-    }
+    .login-submit { width: 100%; margin-top: 8px; height: 44px; font-size: 15px; }
     .login-submit:disabled { opacity: 0.55; cursor: not-allowed; }
     .login-foot {
-      margin-top: 20px;
-      text-align: center;
-      font-size: 11.5px;
-      color: var(--gray-600, #5A5A5A);
-      line-height: 1.8;
+      margin-top: 20px; text-align: center;
+      font-size: 12px; line-height: 20px;
+      color: var(--muted, #565d65);
     }
     .login-foot code {
       font-family: var(--mono, monospace);
-      color: var(--gray-400, #8A8A8A);
-      background: rgba(255, 255, 255, 0.04);
-      padding: 1px 6px;
-      border-radius: 4px;
+      color: var(--text, #191c20);
+      background: var(--canvas, #f5f6f7);
+      border: 1px solid var(--divider, #e6e8eb);
+      padding: 1px 6px; border-radius: 4px;
+    }
+    .login-panel-note {
+      margin-top: 18px; text-align: center;
+      font-size: 11.5px; color: var(--gray-400, #7d848c);
+    }
+
+    /* ── 响应式: 窄屏隐藏主视觉 ── */
+    @media (max-width: 1080px) {
+      .login-wrap { grid-template-columns: 1fr; }
+      .login-hero { display: none; }
+      .login-panel { min-height: 100vh; }
+    }
+    @media (max-width: 480px) {
+      .login-panel { padding: 24px 16px; }
+      .login-card { padding: 24px 20px; border-radius: 10px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .login-hero::after, .hero-kicker i { animation: none; }
+      .feat { transition: none; }
     }
   </style>
 </head>
 <body>
   <div class="login-wrap">
-    <div class="login-card">
-      <div class="login-brand">
-        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <rect width="32" height="32" rx="7" fill="#16A34A"/>
-          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" transform="translate(4.5,4) scale(1.15)" fill="#FFFFFF"/>
+
+    <!-- ══ 左侧: 科技主视觉 + 功能亮点 ══ -->
+    <aside class="login-hero">
+      <div class="hero-brand">
+        <div class="hero-logo">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="#ffffff" aria-hidden="true">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+          </svg>
+        </div>
+        <div class="hero-title">
+          IceBreaker
+          <small>LLM &amp; GPU Benchmark Platform</small>
+        </div>
+      </div>
+
+      <div class="hero-copy">
+        <div class="hero-kicker"><i></i>Enterprise Stress Testing</div>
+        <h1 class="hero-h1">给大模型与算力集群<br><em>一次真实的极限体检</em></h1>
+        <p class="hero-p">
+          并发阶梯压测、百万级长上下文针刺、GPU / NPU 服务器满载验收，
+          全部指标取自服务端权威计量 —— 结果可复现、可追溯、可交付。
+        </p>
+
+        <div class="hero-feats">
+          <div class="feat">
+            <div class="feat-ico">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 5-7 4 4"/><path d="M3 21h18"/></svg>
+            </div>
+            <div>
+              <div class="feat-t">并发阶梯压测</div>
+              <div class="feat-d">1–100 路闭环稳态，输出 TPS / TPM 与 P50·P90·P99 延迟曲线</div>
+            </div>
+          </div>
+
+          <div class="feat">
+            <div class="feat-ico blue">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h6"/><circle cx="19" cy="16" r="3"/></svg>
+            </div>
+            <div>
+              <div class="feat-t">长上下文验证</div>
+              <div class="feat-d">64K–1M 冷 Prefill + 针刺检索，服务端真实 tokens 计量</div>
+            </div>
+          </div>
+
+          <div class="feat">
+            <div class="feat-ico amber">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+            </div>
+            <div>
+              <div class="feat-t">GPU / NPU 满载验收</div>
+              <div class="feat-d">SSH 全自动执行，温度·功耗·算力·Xid 全量留证</div>
+            </div>
+          </div>
+
+          <div class="feat">
+            <div class="feat-ico violet">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h8M8 17h5"/></svg>
+            </div>
+            <div>
+              <div class="feat-t">一键交付报告</div>
+              <div class="feat-d">HTML / PDF / Markdown，含结论、瓶颈定位与复现参数</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 数据插画 (纯内联 SVG, 离线可用) -->
+      <div class="hero-illus" aria-hidden="true">
+        <div class="illus-head">
+          <span>throughput · concurrency ladder</span>
+          <span class="illus-dots"><span></span><span></span><span></span></span>
+        </div>
+        <svg viewBox="0 0 600 168" preserveAspectRatio="none" role="presentation">
+          <defs>
+            <linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#34d399" stop-opacity="0.34"/>
+              <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+            </linearGradient>
+            <linearGradient id="gLine" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="#5eead4"/>
+              <stop offset="100%" stop-color="#86efac"/>
+            </linearGradient>
+          </defs>
+
+          <g stroke="rgba(255,255,255,0.07)" stroke-width="1">
+            <line x1="0" y1="34" x2="600" y2="34"/>
+            <line x1="0" y1="72" x2="600" y2="72"/>
+            <line x1="0" y1="110" x2="600" y2="110"/>
+            <line x1="0" y1="148" x2="600" y2="148"/>
+          </g>
+
+          <g fill="rgba(94, 234, 212, 0.30)">
+            <rect x="34"  y="128" width="26" height="20" rx="2"/>
+            <rect x="114" y="114" width="26" height="34" rx="2"/>
+            <rect x="194" y="96"  width="26" height="52" rx="2"/>
+            <rect x="274" y="72"  width="26" height="76" rx="2"/>
+            <rect x="354" y="46"  width="26" height="102" rx="2"/>
+            <rect x="434" y="18"  width="26" height="130" rx="2"/>
+          </g>
+
+          <path d="M47,128 L127,114 L207,96 L287,72 L367,46 L447,18 L447,148 L47,148 Z" fill="url(#gArea)"/>
+          <polyline points="47,128 127,114 207,96 287,72 367,46 447,18"
+                    fill="none" stroke="url(#gLine)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+          <g fill="#a7f3d0">
+            <circle cx="47" cy="128" r="3.2"/><circle cx="127" cy="114" r="3.2"/>
+            <circle cx="207" cy="96" r="3.2"/><circle cx="287" cy="72" r="3.2"/>
+            <circle cx="367" cy="46" r="3.2"/><circle cx="447" cy="18" r="3.6"/>
+          </g>
+          <circle cx="447" cy="18" r="8" fill="none" stroke="rgba(167,243,208,.55)" stroke-width="1.4"/>
+          <text x="462" y="22" fill="#a7f3d0" font-size="11" font-family="ui-monospace, Consolas, monospace">peak 578.8 tok/s</text>
+
+          <g fill="#7e968f" font-size="10.5" font-family="ui-monospace, Consolas, monospace" text-anchor="middle">
+            <text x="47" y="164">1</text><text x="127" y="164">5</text><text x="207" y="164">10</text>
+            <text x="287" y="164">20</text><text x="367" y="164">50</text><text x="447" y="164">100</text>
+          </g>
+          <text x="594" y="164" fill="#5f736d" font-size="10.5" text-anchor="end" font-family="ui-monospace, Consolas, monospace">concurrency</text>
         </svg>
-        <div class="login-title">IceBreaker</div>
       </div>
-      <p class="login-sub">LLM API 与 GPU 全方位性能压力与基准评测系统 · 登录后进入控制台</p>
 
-      <form class="login-form" id="loginForm" autocomplete="on">
-        <div class="login-error" id="loginError"></div>
-        <div class="form-item">
-          <label class="form-label" for="loginUser">账号</label>
-          <input class="form-input" type="text" id="loginUser" name="username"
-                 placeholder="请输入账号" autocomplete="username" autofocus required>
-        </div>
-        <div class="form-item">
-          <label class="form-label" for="loginPass">密码</label>
-          <input class="form-input" type="password" id="loginPass" name="password"
-                 placeholder="请输入密码" autocomplete="current-password" required>
-        </div>
-        <button type="submit" class="btn btn-primary login-submit" id="loginSubmitBtn">登 录</button>
-      </form>
-
-      <div class="login-foot">
-        默认账号 <code>admin / admin123</code> · 请登录后尽快重置<br>
-        忘记密码请联系管理员: <code>python server.py --add-user &lt;账号&gt;</code>
+      <div class="hero-foot">
+        <span><b>1 → 100</b> 并发阶梯</span>
+        <span class="sep"></span>
+        <span><b>64K → 1M</b> 长上下文</span>
+        <span class="sep"></span>
+        <span><b>GPU · NPU</b> 服务器满载</span>
+        <span class="sep"></span>
+        <span><b>HTML · PDF</b> 一键报告</span>
       </div>
-    </div>
+    </aside>
+
+    <!-- ══ 右侧: 登录卡 ══ -->
+    <main class="login-panel">
+      <div class="login-card">
+        <div class="login-brand">
+          <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect width="32" height="32" rx="8" fill="#075f49"/>
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" transform="translate(4.5,4) scale(1.15)" fill="#FFFFFF"/>
+          </svg>
+          <div class="login-title">IceBreaker</div>
+        </div>
+        <p class="login-sub">登录后进入控制台 · LLM API 与 GPU 全方位性能压力与基准评测系统</p>
+
+        <form class="login-form" id="loginForm" autocomplete="on">
+          <div class="login-error" id="loginError"></div>
+          <div class="form-item">
+            <label class="form-label" for="loginUser">账号</label>
+            <input class="form-input" type="text" id="loginUser" name="username"
+                   placeholder="请输入账号" autocomplete="username" autofocus required>
+          </div>
+          <div class="form-item">
+            <label class="form-label" for="loginPass">密码</label>
+            <input class="form-input" type="password" id="loginPass" name="password"
+                   placeholder="请输入密码" autocomplete="current-password" required>
+          </div>
+          <button type="submit" class="btn btn-primary login-submit" id="loginSubmitBtn">登 录</button>
+        </form>
+
+        <div class="login-foot">
+          默认账号 <code>admin / admin123</code> · 请登录后尽快重置<br>
+          忘记密码请联系管理员: <code>python server.py --add-user &lt;账号&gt;</code>
+        </div>
+        <div class="login-panel-note">纯前端安全无痕运行 · 适用于所有 OpenAI 兼容规范接口</div>
+      </div>
+    </main>
   </div>
 
   <script>

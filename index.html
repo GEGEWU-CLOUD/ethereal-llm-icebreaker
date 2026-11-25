@@ -141,6 +141,11 @@
     <div class="ws-topbar">
       <button type="button" class="btn btn-outline btn-xs" id="btnBackLauncher">‹ 返回选择压测类型</button>
       <span class="ws-mode-label" id="wsModeLabel">LLM API 压测</span>
+      <div class="llm-result-actions" id="llmResultActions" data-mode="llm">
+        <span class="llm-saved-hint" id="llmSavedHint"></span>
+        <button type="button" class="btn btn-secondary btn-xs" id="btnLlmPreview">在线查看报告</button>
+        <button type="button" class="btn btn-outline btn-xs" id="btnLlmClearHistory">清空历史记录</button>
+      </div>
     </div>
 
 
@@ -853,7 +858,7 @@
               </label>
             </div>
           </div>
-          <div class="clean-terminal" id="terminalLog" style="border:1px solid #1E1E1E;">
+          <div class="clean-terminal" id="terminalLog" style="border:1px solid var(--divider);">
             <div class="term-row sys">[SYSTEM] 压测引擎 2.5 Pro 就绪 — Swiss Typography Edition</div>
           </div>
         </div>
